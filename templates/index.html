@@ -6,21 +6,152 @@
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>TradingView - Advanced Charts</title>
 
+        <!-- Socket.IO for WebSocket communications -->
+        <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
         <!-- Use the correct static path -->
         <script src="charting_library/charting_library.standalone.js"></script>
-        <script src="datafeeds/udf/dist/bundle.js"></script>
+        <!-- <script src="datafeeds/udf/dist/bundle.js"></script> -->
+        <script type="text/javascript" src="datafeeds/tv-datafeed.js"></script>
     </head>
     <body>
 
         <div id="chartContainer"></div>
 
         <script>
+            // Create a proxy for WebSocket to intercept connections
+            const originalWebSocket = window.WebSocket;
+            let socketProxy;
+            let proxyUrl;
+            
+            // Fetch the WebSocket proxy URL from our server
+            fetch('/ws-proxy-url')
+                .then(response => response.json())
+                .then(data => {
+                    proxyUrl = data.proxyUrl;
+                    console.log('Using WebSocket proxy:', proxyUrl);
+                })
+                .catch(error => {
+                    console.error('Failed to get WebSocket proxy URL:', error);
+                });
+                
+            // Override the WebSocket constructor with a proper proxy implementation
+            window.WebSocket = function(url, protocols) {
+                console.log('WebSocket connection intercepted:', url);
+                
+                if (url.includes('widgetdata.tradingview.com') || url.includes('tradingview.com')) {
+                    // Create a fake WebSocket instance that will delegate to our Socket.IO proxy
+                    const fakeWs = {};
+                    
+                    // Store the connection ID we'll receive from the server
+                    let connectionId = null;
+                    
+                    // Create Socket.IO connection to our proxy server if not already connected
+                    if (!socketProxy) {
+                        socketProxy = io();
+                        
+                        socketProxy.on('connect', () => {
+                            console.log('Connected to WebSocket proxy server');
+                        });
+                        
+                        socketProxy.on('disconnect', () => {
+                            console.log('Disconnected from WebSocket proxy server');
+                        });
+                    }
+                    
+                    // Initialize connection to TradingView via our proxy
+                    socketProxy.emit('tv_ws_connect', {url: url});
+                    
+                    // Handle the connection ID response
+                    socketProxy.on('tv_ws_connected', (data) => {
+                        connectionId = data.connectionId;
+                        console.log('WebSocket proxy connection established with ID:', connectionId);
+                        // Trigger onopen when connected to TradingView
+                        if (fakeWs.onopen) {
+                            fakeWs.onopen();
+                        }
+                    });
+                    
+                    // Handle incoming messages from TradingView
+                    socketProxy.on('tv_message', (data) => {
+                        if (fakeWs.onmessage) {
+                            fakeWs.onmessage({data: data.message, origin: proxyUrl || window.location.origin});
+                        }
+                    });
+                    
+                    // Handle connection close
+                    socketProxy.on('tv_disconnect', () => {
+                        if (fakeWs.onclose) {
+                            fakeWs.onclose({code: 1000, reason: 'Normal closure', wasClean: true});
+                        }
+                    });
+                    
+                    // Handle errors
+                    socketProxy.on('tv_error', (data) => {
+                        if (fakeWs.onerror) {
+                            fakeWs.onerror(data.error);
+                        }
+                    });
+                    
+                    // Implement the WebSocket interface
+                    fakeWs.send = function(data) {
+                        socketProxy.emit('tv_ws_send', {connectionId: connectionId, message: data});
+                    };
+                    
+                    fakeWs.close = function() {
+                        socketProxy.emit('tv_ws_disconnect', {connectionId: connectionId});
+                    };
+                    
+                    // Set WebSocket readyState properties
+                    fakeWs.CONNECTING = 0;
+                    fakeWs.OPEN = 1;
+                    fakeWs.CLOSING = 2;
+                    fakeWs.CLOSED = 3;
+                    fakeWs.readyState = fakeWs.CONNECTING;
+                    
+                    // Update readyState on events
+                    socketProxy.on('tv_connect', () => {
+                        fakeWs.readyState = fakeWs.OPEN;
+                    });
+                    
+                    socketProxy.on('tv_disconnect', () => {
+                        fakeWs.readyState = fakeWs.CLOSED;
+                    });
+                    
+                    return fakeWs;
+                } else {
+                    // For non-TradingView WebSockets, use the original implementation
+                    return new originalWebSocket(url, protocols);
+                }
+            };
+            
+            // Keep WebSocket prototype methods
+            window.WebSocket.prototype = originalWebSocket.prototype;
+            
+            // Initialize TradingView chart
+            let setDemoDatafeedStatus = undefined;
+            class CustomDatafeed extends TradingViewDatafeed.TradingViewDatafeed {
+                resolveSymbol() {
+                    if (setDemoDatafeedStatus) {
+                        setDemoDatafeedStatus(arguments[0]);
+                    }
+                    super.resolveSymbol(
+                        arguments[0],
+                        arguments[1],
+                        arguments[2],
+                        arguments[3]
+                    );
+                }
+            }
+            const datafeed = new CustomDatafeed({
+                // Optional configuration
+            });
+
             new TradingView.widget({
                 container: 'chartContainer',
                 locale: 'en',
                 // Use the correct library path
                 library_path: 'charting_library/',
-                datafeed: new Datafeeds.UDFCompatibleDatafeed("https://demo-feed-data.tradingview.com"),
+                datafeed: datafeed,
                 symbol: 'AAPL',
                 interval: '1D',
                 fullscreen: true,

@@ -25,7 +25,7 @@ This project uses uv for dependency management.
 ### Running the Application
 
 ```
-python main.py
+uv run main.py
 ```
 
 The application will be available at http://localhost:5000
