@@ -227,6 +227,8 @@ def handle_tv_ws_connect(data):
         emit('tv_ws_error', {'error': 'No URL provided'})
         return
     
+    logger.info(f"Received WebSocket proxy request for: {url}")
+    
     # Create a new proxy instance
     if request.sid not in active_connections:
         active_connections[request.sid] = {}
@@ -242,12 +244,22 @@ def handle_tv_ws_send(data):
     connection_id = data.get('connectionId')
     message = data.get('message')
     
-    if not connection_id or not message:
-        emit('tv_ws_error', {'error': 'Missing connectionId or message'})
+    if not message:
+        emit('tv_ws_error', {'error': 'Missing message'})
         return
+        
+    # If no connectionId provided, try to find the first available connection
+    if not connection_id:
+        if request.sid in active_connections and active_connections[request.sid]:
+            # Use the first available connection
+            connection_id = next(iter(active_connections[request.sid]))
+            logger.info(f"No connectionId provided, using first available: {connection_id}")
+        else:
+            emit('tv_ws_error', {'error': 'No active connections found'})
+            return
     
     if request.sid not in active_connections or connection_id not in active_connections[request.sid]:
-        emit('tv_ws_error', {'error': 'Connection not found'})
+        emit('tv_ws_error', {'error': f'Connection not found: {connection_id}'})
         return
     
     proxy = active_connections[request.sid][connection_id]
