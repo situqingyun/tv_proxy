@@ -1,28 +1,141 @@
 <!DOCTYPE HTML>
 <html lang="en">
-    <head>
-        <meta charset = "UTF-8">
-        <meta http-equiv="X-UA-Compatible" content="IE=edge">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>TradingView - Advanced Charts</title>
 
-        <!-- Socket.IO for WebSocket communications -->
-        <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
-        <!-- Use the correct static path -->
-        <script src="charting_library/charting_library.standalone.js"></script>
-        <!-- <script src="datafeeds/udf/dist/bundle.js"></script> -->
-        <script type="text/javascript" src="datafeeds/tv-datafeed.js"></script>
-    </head>
-    <body>
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,minimum-scale=1.0">
+    <title>TradingView - Advanced Charts</title>
 
-        <div id="chartContainer"></div>
+    <!-- Socket.IO for WebSocket communications -->
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <!-- Use the correct static path -->
+    <script src="charting_library/charting_library.standalone.js"></script>
+    <!-- <script src="datafeeds/udf/dist/bundle.js"></script> -->
+    <script type="text/javascript" src="datafeeds/tv-datafeed.js"></script>
+    <script>
+        function getParameterByName(name) {
+            name = name.replace(/[\[]/, '\\[').replace(/[\]]/, '\\]');
+            var regex = new RegExp('[\\?&]' + name + '=([^&#]*)'),
+                results = regex.exec(location.search);
+            return results === null
+                ? ''
+                : decodeURIComponent(results[1].replace(/\+/g, ' '));
+        }
 
-        <script>
+        const codeSvg = (style) => `<svg style="${style}" width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M6.93556 4.5061L3.43556 8.5061L3.00342 8.99998L3.43556 9.49386L6.93556 13.4939L8.06443 12.5061L4.99657 8.99998L8.06443 5.49386L6.93556 4.5061ZM11.0644 13.4939L14.5644 9.49386L14.9966 8.99998L14.5644 8.5061L11.0644 4.5061L9.93556 5.49386L13.0034 8.99998L9.93556 12.5061L11.0644 13.4939Z" fill="currentColor"/></svg>`;
+        const customCSS = `#documentation-toolbar-button {
+				all: unset;
+				position: relative;
+				color: #FFF;
+				font-size: 14px;
+				font-weight: 400;
+				line-height: 18px;
+				letter-spacing: 0.15408px;
+				padding: 5px 12px;
+				border-radius: 80px;
+				background: #2962FF;
+				cursor: pointer;
+			}
+			#documentation-toolbar-button:hover {
+				background: #1E53E5;
+			}
+			#documentation-toolbar-button:active {
+				background: #1948CC;
+			}
+			#theme-toggle {
+				display: flex;
+				flex-direction: row;
+				align-items: center;
+				gap: 12px;
+			}
+			.switcher {
+				display: inline-block;
+				position: relative;
+				flex: 0 0 auto;
+				width: 38px;
+				height: 20px;
+				vertical-align: middle;
+				z-index: 0;
+				-webkit-tap-highlight-color: transparent;
+			}
+
+			.switcher input {
+				position: absolute;
+				top: 0;
+				left: 0;
+				width: 100%;
+				height: 100%;
+				opacity: 0;
+				z-index: 1;
+				cursor: default;
+			}
+
+			.switcher .thumb-wrapper {
+				display: block;
+				border-radius: 20px;
+				position: relative;
+				z-index: 0;
+				width: 100%;
+				height: 100%;
+			}
+
+			.switcher .track {
+				position: absolute;
+				left: 0;
+				top: 0;
+				width: 100%;
+				height: 100%;
+				border-radius: 20px;
+				background-color: #a3a6af;
+			}
+
+			#theme-switch:checked + .thumb-wrapper .track {
+				background-color: #2962ff;
+			}
+
+			.switcher .thumb {
+				display: block;
+				width: 14px;
+				height: 14px;
+				border-radius: 14px;
+				transition-duration: 250ms;
+				transition-property: transform;
+				transition-timing-function: ease-out;
+				transform: translate(3px, 3px);
+				background: #ffffff;
+			}
+
+			[dir=rtl] .switcher .thumb {
+				transform: translate(-3px, 3px);
+			}
+
+			.switcher input:checked + .thumb-wrapper .thumb {
+				transform: translate(21px, 3px);
+			}
+
+			[dir=rtl] .switcher input:checked + .thumb-wrapper .thumb {
+				transform: translate(-21px, 3px);
+			}
+
+			#documentation-toolbar-button:focus-visible:before,
+			.switcher:focus-within:before {
+				content: '';
+				display: block;
+				position: absolute;
+				top: -2px;
+				right: -2px;
+				bottom: -2px;
+				left: -2px;
+				border-radius: 16px;
+				outline: #2962FF solid 2px;
+			}`;
+        function initOnReady() {
             // Create a proxy for WebSocket to intercept connections
             const originalWebSocket = window.WebSocket;
             let socketProxy;
             let proxyUrl;
-            
+
             // Fetch the WebSocket proxy URL from our server
             fetch('/ws-proxy-url')
                 .then(response => response.json())
@@ -126,7 +239,7 @@
             
             // Keep WebSocket prototype methods
             window.WebSocket.prototype = originalWebSocket.prototype;
-            
+
             // Initialize TradingView chart
             let setDemoDatafeedStatus = undefined;
             class CustomDatafeed extends TradingViewDatafeed.TradingViewDatafeed {
@@ -146,7 +259,17 @@
                 // Optional configuration
             });
 
-            new TradingView.widget({
+            const isDark =
+                window.matchMedia &&
+                window.matchMedia('(prefers-color-scheme: dark)').matches;
+            const theme = getParameterByName('theme') || (isDark ? 'dark' : 'light');
+            const cssBlob = new Blob([customCSS], {
+                type: "text/css",
+            });
+            const cssBlobUrl = URL.createObjectURL(cssBlob);
+
+            // 创建TradingView小部件并将其赋值给window.widget，使其全局可用
+            window.widget = new TradingView.widget({
                 container: 'chartContainer',
                 locale: 'en',
                 // Use the correct library path
@@ -156,7 +279,2262 @@
                 interval: '1D',
                 fullscreen: true,
                 debug: true,
+                theme: theme,
+                custom_css_url: cssBlobUrl,
+                // 启用图表存储功能
+                charts_storage_url: '/saveload.tradingview.com',
+                charts_storage_api_version: '1.1',
+                client_id: 'tv_proxy', // 客户端ID (可以设置为您的网站名称)
+                user_id: 'public_user', // 用户ID，实际应用中应该设置为用户的唯一标识符
+                disabled_features: [
+                    'use_localstorage_for_settings',
+                    'open_account_manager',
+                    'dom_widget',
+                ],
+                enabled_features: [
+                    'study_templates',
+                    'pre_post_market_sessions',
+                    'show_symbol_logos',
+                    'show_exchange_logos',
+                    'seconds_resolution',
+                    // 'custom_resolutions', // datafeed doesn't support this
+                    'secondary_series_extend_time_scale',
+                    // 'determine_first_data_request_size_using_visible_range',
+                    'show_percent_option_for_right_margin',
+                    'display_data_mode',
+                    'items_favoriting',
+                    'disable_resolution_rebuild',
+                    'pre_post_market_price_line',
+                    "charting_library_export_chart_data"
+                ],
+                export_data: true,
             });
-        </script>
-    </body>
+
+            window.widget.onChartReady(function () {
+                window.widget.headerReady().then(() => {
+                    var button = window.widget.createButton();
+                    button.setAttribute('title', 'Replay');
+                    button.innerHTML = '⏪ Replay';
+                    button.addEventListener('click', function () {
+                        // 显示/隐藏replay-menu
+                        if (typeof window.toggleReplayMenu === 'function') {
+                            window.toggleReplayMenu();
+                        }
+                    });
+
+                    const themeToggleEl = window.widget.createButton({
+                        useTradingViewStyle: false,
+                        align: 'right',
+                    });
+                    themeToggleEl.dataset.internalAllowKeyboardNavigation = 'true';
+                    themeToggleEl.id = 'theme-toggle';
+                    themeToggleEl.innerHTML = `<label for="theme-switch" id="theme-switch-label">Dark Mode</label>
+                        <div class="switcher">
+                            <input type="checkbox" id="theme-switch" tabindex="-1">
+                            <span class="thumb-wrapper">
+                                <span class="track"></span>
+                                <span class="thumb"></span>
+                            </span>
+                        </div>`;
+                    themeToggleEl.title = 'Toggle theme';
+                    const checkboxEl = themeToggleEl.querySelector('#theme-switch');
+                    checkboxEl.checked = theme === 'dark';
+                    checkboxEl.addEventListener('change', function () {
+                        const themeToSet = this.checked ? 'dark' : 'light'
+                        window.widget.changeTheme(themeToSet, { disableUndo: true });
+                    });
+                });
+            });
+        }
+
+        window.addEventListener('DOMContentLoaded', initOnReady, false);
+    </script>
+</head>
+
+<body style="margin: 0px;">
+
+    <div id="chartContainer"></div>
+    <!-- Replay 浮动菜单 -->
+    <div id="replay-menu">
+        <div id="replay-mode-container" class="custom-dropdown" style="margin-right:6px;">
+            <div id="replay-mode-selected" class="dropdown-selected" title="选择模式">
+                <span id="replay-mode-text">🎲 随机K线</span>
+                <span class="dropdown-arrow">▼</span>
+            </div>
+            <div id="replay-mode-options" class="dropdown-options">
+                <div class="dropdown-option" data-value="random">🎲 随机K线</div>
+                <div class="dropdown-option" data-value="custom">⏰ 选择时间</div>
+            </div>
+        </div>
+        <input type="datetime-local" id="replay-datetime" style="display:none;margin-right:6px;">
+        <button id="replay-play" title="播放">▶️</button>
+        <button id="replay-pause" title="暂停" style="display:none;">⏸️</button>
+        <button id="replay-next" title="前进">⏭️</button>
+        <select id="replay-speed" title="倍速选择" style="margin:0 6px;">
+            <option value="1">1x</option>
+            <option value="2">2x</option>
+            <option value="5">5x</option>
+        </select>
+        <div class="replay-divider"></div>
+        <!-- 回放状态信息 -->
+        <div id="replay-status" class="replay-status">
+            <div id="remaining-bars" class="status-item" title="剩余K线数">
+                <span class="status-label">剩余:</span>
+                <span id="remaining-bars-value" class="status-value">--</span>
+            </div>
+            <div id="current-pnl" class="status-item" title="当前盈亏" style="display:none;">
+                <span class="status-label">盈亏:</span>
+                <span id="current-pnl-value" class="status-value">--</span>
+            </div>
+        </div>
+        <div class="replay-divider"></div>
+        <!-- 交易控制区 -->
+        <div id="trading-controls">
+            <button id="buy-button" class="trade-button buy" title="做多">买入</button>
+            <button id="sell-button" class="trade-button sell" title="做空">卖出</button>
+            <button id="close-position" class="trade-button close" title="平仓" disabled>平仓</button>
+            <div id="position-info" class="position-info">
+                <span id="position-type"></span>
+                <span id="position-price"></span>
+            </div>
+        </div>
+        <div class="replay-divider"></div>
+        <button id="stats-button" class="trade-button stats" title="交易统计">总览</button>
+        <button id="history-button" class="trade-button history" title="历史记录">历史</button>
+        <button id="restore-interval" class="trade-button restore" title="恢复原始周期" style="display:none;">恢复周期</button>
+        <button id="replay-close" title="关闭">❌</button>
+    </div>
+
+    <!-- 统计信息弹窗 -->
+    <div id="stats-modal" class="stats-modal">
+        <div class="stats-modal-header">
+            <div class="stats-modal-title">交易统计</div>
+            <button id="stats-modal-close" class="stats-modal-close">&times;</button>
+        </div>
+        <div class="stats-content">
+            <div class="stats-item">
+                <span class="stats-label">总交易数:</span>
+                <span id="total-trades" class="stats-value">0</span>
+            </div>
+            <div class="stats-item">
+                <span class="stats-label">盈利交易:</span>
+                <span id="profitable-trades" class="stats-value">0</span>
+            </div>
+            <div class="stats-item">
+                <span class="stats-label">成功率:</span>
+                <span id="win-rate" class="stats-value">0%</span>
+            </div>
+            <div class="stats-item">
+                <span class="stats-label">总盈亏:</span>
+                <span id="total-pnl" class="stats-value">0.00</span>
+            </div>
+            <div class="stats-item">
+                <span class="stats-label">盈利率:</span>
+                <span id="profit-rate" class="stats-value">0.00%</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 历史回放记录弹窗 -->
+    <div id="history-modal" class="modal-container">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="modal-title">回放历史记录</div>
+                <button id="history-modal-close" class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="history-list" class="history-list">
+                    <!-- 历史记录列表将通过JS动态加载 -->
+                </div>
+                <div id="history-loading" class="history-loading">
+                    <div class="loading-spinner"></div>
+                    <div>加载中...</div>
+                </div>
+                <div id="history-empty" class="history-empty" style="display:none;">
+                    暂无历史回放记录
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        #replay-menu {
+            position: fixed;
+            left: 50%;
+            bottom: 40px;
+            top: auto;
+            transform: translateX(-50%);
+            z-index: 9999;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(40, 44, 52, 0.95);
+            border-radius: 8px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+            padding: 8px 12px;
+            user-select: none;
+            cursor: move;
+            border: 1px solid #222b;
+            transition: left 0.2s, top 0.2s, bottom 0.2s, transform 0.2s;
+        }
+        #debug-menu button {
+            background: #23272e;
+            border: none;
+            color: #fff;
+            font-size: 18px;
+            border-radius: 4px;
+            padding: 6px 10px;
+            margin: 0;
+            transition: background 0.2s;
+            outline: none;
+        }
+        #debug-menu button:hover {
+            background: #3a3f4b;
+        }
+        /* Custom dropdown styles */
+        .custom-dropdown {
+            position: relative;
+            min-width: 120px;
+            cursor: pointer;
+        }
+        .dropdown-selected {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #23272e;
+            color: #fff;
+            padding: 6px 10px;
+            border-radius: 4px;
+            border: 1px solid #3a3f4b;
+        }
+        .dropdown-arrow {
+            font-size: 10px;
+            margin-left: 8px;
+        }
+        .dropdown-options {
+            position: absolute;
+            width: 100%;
+            background: #23272e;
+            border-radius: 4px;
+            border: 1px solid #3a3f4b;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+            z-index: 10000;
+            max-height: 200px;
+            overflow-y: auto;
+            display: none;
+        }
+        .dropdown-option {
+            padding: 8px 10px;
+            transition: background 0.2s;
+        }
+        .dropdown-option:hover, .dropdown-option.selected {
+            background: #3a3f4b;
+        }
+        /* Trading controls styles */
+        #trading-controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .trade-button {
+            padding: 6px 10px;
+            border-radius: 4px;
+            border: none;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .trade-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .trade-button.buy {
+            background-color: #26a69a; /* 绿色 - 买入 */
+        }
+        .trade-button.buy:hover:not(:disabled) {
+            background-color: #2bbbad;
+        }
+        .trade-button.sell {
+            background-color: #ef5350; /* 红色 - 卖出 */
+        }
+        .trade-button.sell:hover:not(:disabled) {
+            background-color: #f76d6a;
+        }
+        .trade-button.close {
+            background-color: #7b8089; /* 灰色 - 平仓 */
+        }
+        .trade-button.close:hover:not(:disabled) {
+            background-color: #9ea5b0;
+        }
+        .trade-button.stats {
+            background-color: #2962FF; /* 蓝色 - 统计 */
+        }
+        .trade-button.stats:hover:not(:disabled) {
+            background-color: #1E53E5;
+        }
+        .trade-button.restore {
+            background-color: #7b8089; /* 灰色 - 恢复周期 */
+        }
+        .trade-button.restore:hover:not(:disabled) {
+            background-color: #9ea5b0;
+        }
+        .position-info {
+            display: flex;
+            flex-direction: column;
+            min-width: 60px;
+            padding: 4px 8px;
+            background: rgba(35, 39, 46, 0.8);
+            border-radius: 4px;
+            font-size: 12px;
+            color: white;
+            border: 1px solid #3a3f4b;
+        }
+        .replay-divider {
+            width: 1px;
+            height: 24px;
+            background-color: #3a3f4b;
+            margin: 0 4px;
+        }
+        /* 回放状态信息样式 */
+        .replay-status {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            min-width: 80px;
+        }
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 2px 6px;
+            background: rgba(35, 39, 46, 0.8);
+            border-radius: 3px;
+            font-size: 11px;
+            color: white;
+            border: 1px solid #3a3f4b;
+        }
+        .status-label {
+            color: #9ea5b0;
+            margin-right: 4px;
+        }
+        .status-value {
+            font-weight: bold;
+            font-size: 11px;
+        }
+        .status-value.positive {
+            color: #26a69a;
+        }
+        .status-value.negative {
+            color: #ef5350;
+        }
+        .status-value.warning {
+            color: #ff9800;
+        }
+        /* 统计信息弹窗样式 */
+        .stats-modal {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(40, 44, 52, 0.95);
+            border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+            padding: 20px;
+            z-index: 10000;
+            color: white;
+            min-width: 300px;
+            border: 1px solid #3a3f4b;
+        }
+        .stats-modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            border-bottom: 1px solid #3a3f4b;
+            padding-bottom: 10px;
+        }
+        .stats-modal-title {
+            font-size: 18px;
+            font-weight: bold;
+        }
+        .stats-modal-close {
+            background: none;
+            border: none;
+            color: #9ea5b0;
+            font-size: 20px;
+            cursor: pointer;
+        }
+        .stats-item {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            padding: 5px 0;
+            border-bottom: 1px solid #3a3f4b30;
+        }
+        .stats-label {
+            color: #9ea5b0;
+        }
+        .stats-value {
+            font-weight: bold;
+        }
+        .stats-value.positive {
+            color: #26a69a;
+        }
+        .stats-value.negative {
+            color: #ef5350;
+        }
+        
+        /* 历史回放记录模态框样式 */
+        .modal-container {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 10000;
+            overflow: hidden;
+        }
+        
+        .modal-content {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(40, 44, 52, 0.95);
+            border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+            width: 90%;
+            max-width: 800px;
+            max-height: 80vh;
+            display: flex;
+            flex-direction: column;
+            color: white;
+            border: 1px solid #3a3f4b;
+        }
+        
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px 20px;
+            border-bottom: 1px solid #3a3f4b;
+        }
+        
+        .modal-title {
+            font-size: 18px;
+            font-weight: bold;
+        }
+        
+        .modal-close {
+            background: none;
+            border: none;
+            color: #9ea5b0;
+            font-size: 24px;
+            cursor: pointer;
+        }
+        
+        .modal-body {
+            padding: 15px 20px;
+            overflow-y: auto;
+            max-height: calc(80vh - 60px);
+        }
+        
+        .history-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        
+        .history-item {
+            background: rgba(50, 54, 62, 0.6);
+            border-radius: 6px;
+            padding: 12px;
+            border-left: 4px solid transparent;
+            transition: all 0.2s;
+        }
+        
+        .history-item:hover {
+            background: rgba(60, 64, 72, 0.8);
+            border-left-color: #2962FF;
+        }
+        
+        .history-item-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+        
+        .history-item-symbol {
+            font-weight: bold;
+            font-size: 16px;
+        }
+        
+        .history-item-date {
+            color: #9ea5b0;
+            font-size: 12px;
+        }
+        
+        .history-item-details {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+        }
+        
+        .history-detail {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 0;
+            border-bottom: 1px solid #3a3f4b20;
+        }
+        
+        .history-detail-label {
+            color: #9ea5b0;
+            font-size: 13px;
+        }
+        
+        .history-detail-value {
+            font-weight: bold;
+            font-size: 13px;
+        }
+        
+        .history-item-actions {
+            display: flex;
+            justify-content: flex-end;
+            margin-top: 10px;
+            gap: 8px;
+        }
+        
+        .history-action-btn {
+            padding: 5px 10px;
+            border-radius: 4px;
+            border: none;
+            font-size: 12px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .history-action-replay {
+            background-color: #2962FF;
+            color: white;
+        }
+        
+        .history-action-replay:hover {
+            background-color: #1E53E5;
+        }
+        
+        .history-loading {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px 0;
+            color: #9ea5b0;
+        }
+        
+        .loading-spinner {
+            width: 30px;
+            height: 30px;
+            border: 3px solid rgba(158, 165, 176, 0.3);
+            border-radius: 50%;
+            border-top-color: #9ea5b0;
+            animation: spin 1s linear infinite;
+            margin-bottom: 10px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .history-empty {
+            text-align: center;
+            padding: 30px 0;
+            color: #9ea5b0;
+            font-style: italic;
+        }
+        
+        .history-detail-value.positive {
+            color: #26a69a;
+        }
+        
+        .history-detail-value.negative {
+            color: #ef5350;
+        }
+        
+        .trade-button.history {
+            background-color: #7B1FA2; /* 紫色 - 历史 */
+        }
+        
+        .trade-button.history:hover:not(:disabled) {
+            background-color: #9C27B0;
+        }
+    </style>
+    <script>
+        // 拖动浮动菜单
+        (function() {
+            var menu = document.getElementById('replay-menu');
+            // 初始居中底部
+            menu.style.display = 'none'; // 初始隐藏
+            var isDragging = false;
+            var offsetX = 0, offsetY = 0;
+            var hasMoved = false;
+            // 只允许通过菜单空白区域拖动
+            menu.addEventListener('mousedown', function(e) {
+                if (e.target !== menu) return;
+                isDragging = true;
+                offsetX = e.clientX - menu.offsetLeft;
+                offsetY = e.clientY - menu.offsetTop;
+                menu.style.transition = 'none';
+            });
+            document.addEventListener('mousemove', function(e) {
+                if (isDragging) {
+                    hasMoved = true;
+                    menu.style.left = (e.clientX - offsetX) + 'px';
+                    menu.style.top = (e.clientY - offsetY) + 'px';
+                    menu.style.bottom = 'auto';
+                    menu.style.transform = '';
+                }
+            });
+            document.addEventListener('mouseup', function() {
+                isDragging = false;
+                menu.style.transition = '';
+            });
+            // 关闭按钮
+            var replayCloseBtn = document.getElementById('replay-close');
+            if (replayCloseBtn) {
+                replayCloseBtn.onclick = function() {
+                    menu.style.display = 'none';
+                };
+            }
+            // 自定义下拉菜单
+            var replayModeContainer = document.getElementById('replay-mode-container');
+            var replayModeSelected = document.getElementById('replay-mode-selected');
+            var replayModeOptions = document.getElementById('replay-mode-options');
+            var replayModeText = document.getElementById('replay-mode-text');
+            var replayDatetime = document.getElementById('replay-datetime');
+            var replayStartBtn = document.getElementById('replay-start');
+            
+            if (replayModeContainer && replayModeSelected && replayModeOptions) {
+                // 获取下拉箭头元素
+                var dropdownArrow = replayModeSelected.querySelector('.dropdown-arrow');
+                var modeText = replayModeSelected.querySelector('#replay-mode-text');
+                
+                // 点击文本直接触发对应的操作
+                if (modeText) {
+                    modeText.addEventListener('click', function(e) {
+                        e.stopPropagation();
+                        // 获取当前选中的值
+                        var currentValue = modeText.textContent.includes('随机K线') ? 'random' : 'custom';
+                        triggerOptionAction(currentValue, modeText.textContent);
+                    });
+                }
+                
+                // 点击下拉箭头显示/隐藏下拉菜单
+                if (dropdownArrow) {
+                    dropdownArrow.addEventListener('click', function(e) {
+                        e.stopPropagation(); // 防止事件冒泡
+                        
+                        // 计算是否有足够空间在下方显示
+                        var rect = replayModeContainer.getBoundingClientRect();
+                        var bottomSpace = window.innerHeight - rect.bottom;
+                        var optionsHeight = replayModeOptions.scrollHeight || 200; // 预估高度
+                        
+                        // 设置下拉菜单位置
+                        if (bottomSpace < optionsHeight) {
+                            // 底部空间不足，向上显示
+                            replayModeOptions.style.bottom = '100%';
+                            replayModeOptions.style.top = 'auto';
+                            replayModeOptions.style.marginBottom = '5px';
+                        } else {
+                            // 底部空间充足，向下显示
+                            replayModeOptions.style.top = '100%';
+                            replayModeOptions.style.bottom = 'auto';
+                            replayModeOptions.style.marginTop = '5px';
+                        }
+                        
+                        // 切换显示状态
+                        if (replayModeOptions.style.display === 'block') {
+                            replayModeOptions.style.display = 'none';
+                        } else {
+                            replayModeOptions.style.display = 'block';
+                        }
+                    });
+                }
+                // 处理选项点击逻辑的函数
+                function triggerOptionAction(value, text) {
+                    // 更新显示文本
+                    if (replayModeText) {
+                        replayModeText.textContent = text;
+                    }
+                    
+                    // 关闭下拉菜单
+                    replayModeOptions.style.display = 'none';
+                    
+                    // 处理日期时间选择器的显示/隐藏
+                    if (value === 'custom' && replayDatetime) {
+                        replayDatetime.style.display = 'inline-block';
+                        // 如果已经有值，更新图表范围
+                        if (replayDatetime.value) {
+                            updateChartVisibleRange(replayDatetime.value);
+                        }
+                    } else if (value === 'random' && replayDatetime) {
+                        replayDatetime.style.display = 'none';
+                        // 请求随机回放起始点
+                        requestRandomReplayPoint();
+                    } else if (replayDatetime) {
+                        replayDatetime.style.display = 'none';
+                    }
+                    
+                    // 触发模式变更事件
+                    var event = new CustomEvent('replay-mode-change', {
+                        detail: { value: value, text: text }
+                    });
+                    document.dispatchEvent(event);
+                }
+                
+                // 请求随机回放起始点
+                function requestRandomReplayPoint() {
+                    // 获取当前symbol和interval
+                    let symbol = '';
+                    let interval = '';
+                    
+                    try {
+                        if (window.widget) {
+                            const symbol_interval = window.widget.symbolInterval();
+                            symbol = symbol_interval.symbol;
+                            interval = symbol_interval.interval;
+                            
+                            // 保存原始周期，用于后续恢复
+                            tradingState.originalInterval = interval;
+                        }
+                    } catch (e) {
+                        console.error('获取当前图表信息失败:', e);
+                    }
+                    
+                    // 构建查询参数
+                    const queryParams = new URLSearchParams();
+                    // if (symbol) queryParams.append('symbol', symbol);
+                    if (interval) queryParams.append('interval', interval);
+                    
+                    // 请求随机回放起始点
+                    fetch('/api/replay/random?' + queryParams.toString())
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.status === 'ok') {
+                                console.log('获取随机回放起始点成功:', data.data);
+                                
+                                // 保存回放信息
+                                tradingState.replayStartTime = data.data.start_time;
+                                tradingState.barsCount = data.data.bars_count;
+                                
+                                // 如果返回了不同的symbol，需要切换
+                                if (data.data.symbol && data.data.symbol !== symbol) {
+                                    // 切换交易对
+                                    window.widget.setSymbol(data.data.symbol, function() {
+                                        console.log('交易对切换成功，设置回放范围');
+                                        // 设置图表范围
+                                        setChartRangeFromTimestamp(data.data.start_time, data.data.bars_count);
+                                    });
+                                } else {
+                                    // 直接设置图表范围
+                                    setChartRangeFromTimestamp(data.data.start_time, data.data.bars_count);
+                                }
+                                
+                                // 重置回放会话ID
+                                tradingState.replaySessionId = null;
+                                
+                                // 清空交易状态
+                                if (tradingState.inPosition) {
+                                    tradingState.inPosition = false;
+                                    tradingState.positionType = null;
+                                    tradingState.entryPrice = 0;
+                                    clearPositionInfo();
+                                    toggleTradingButtons(false);
+                                }
+                            } else {
+                                console.error('获取随机回放起始点失败:', data.message);
+                                alert('获取随机回放起始点失败: ' + data.message);
+                            }
+                        })
+                        .catch(error => {
+                            console.error('请求随机回放起始点时出错:', error);
+                            alert('请求随机回放起始点时出错');
+                        });
+                }
+                
+                // 根据时间戳设置图表范围
+                function setChartRangeFromTimestamp(timestamp, barsCount) {
+                    if (!window.widget) return Promise.resolve(null);
+                    
+                    try {
+                        const chart = window.widget.chart();
+                        const interval = chart.resolution();
+                        
+                        // 计算每个bar的秒数
+                        const secondsPerBar = calculateSecondsPerBar(interval);
+                        
+                        // 计算回放结束时间（从开始时间算起，最多显示barsCount根K线）
+                        const replayEndTime = timestamp + (barsCount * secondsPerBar);
+                        
+                        // 设置初始可见范围 - 显示100根K线，其中99根在当前时间之前，1根在当前时间
+                        const rangeStartTimestamp = timestamp - (99 * secondsPerBar);
+                        const rangeEndTimestamp = timestamp + (1 * secondsPerBar);
+                        
+                        console.log('设置回放范围 - 时间周期:', interval, 
+                                  '开始时间:', new Date(timestamp * 1000).toLocaleString(),
+                                  '结束时间:', new Date(replayEndTime * 1000).toLocaleString(),
+                                  'K线数量:', barsCount);
+                        
+                        // 保存回放时间信息
+                        tradingState.replayStartTime = timestamp;
+                        tradingState.replayEndTime = replayEndTime;
+                        tradingState.barsCount = barsCount;
+                        tradingState.currentBarTime = timestamp;
+                        
+                        // 设置可见范围
+                        return chart.setVisibleRange({
+                            from: rangeStartTimestamp,
+                            to: rangeEndTimestamp
+                        }).then(function() {
+                            console.log('图表范围已设置');
+                            // 更新状态显示
+                            updateReplayStatus();
+                            return { start: rangeStartTimestamp, end: rangeEndTimestamp };
+                        }).catch(function(error) {
+                            console.error('设置图表范围失败:', error);
+                            return null;
+                        });
+                    } catch(e) {
+                        console.error('设置图表范围时出错:', e);
+                        return Promise.resolve(null);
+                    }
+                }
+                
+                // 点击选项
+                var options = replayModeOptions.querySelectorAll('.dropdown-option');
+                options.forEach(function(option) {
+                    option.addEventListener('click', function(e) {
+                        e.stopPropagation();
+                        var value = this.getAttribute('data-value');
+                        var text = this.textContent;
+                        
+                        triggerOptionAction(value, text);
+                    });
+                });
+                
+                // 点击页面其他地方关闭下拉菜单
+                document.addEventListener('click', function() {
+                    if (replayModeOptions) {
+                        replayModeOptions.style.display = 'none';
+                    }
+                });
+            }
+            
+            // 事件预留
+            var replayPlayBtn = document.getElementById('replay-play');
+
+            var replayNextBtn = document.getElementById('replay-next');
+            if (replayNextBtn) {
+                replayNextBtn.onclick = function() {
+                    // 获取当前选择的倍速
+                    var speed = parseInt(replaySpeedSel ? replaySpeedSel.value : 1);
+                    if (isNaN(speed) || speed < 1) speed = 1;
+                    
+                    // 按照选择的倍速前进
+                    advanceChartRange(speed).then(function(result) {
+                        if (!result) {
+                            console.error('前进失败，无法移动图表范围');
+                        }
+                    });
+                };
+            }
+            // 解除之前的绑定的事件处理程序
+            if (replaySpeedSel) {
+                replaySpeedSel.onchange = function(e) {
+                    // 如果正在播放，重新开始以新的速度播放
+                    if (isPlaying) {
+                        stopPlayback();
+                        startPlayback();
+                    }
+                };
+            }
+            
+            // 播放相关变量
+            var playbackInterval = null;
+            var isPlaying = false;
+            var replayPlayBtn = document.getElementById('replay-play');
+            var replayPauseBtn = document.getElementById('replay-pause');
+            var replaySpeedSel = document.getElementById('replay-speed');
+            
+            // 日期时间选择器变化事件
+            if (replayDatetime) {
+                replayDatetime.addEventListener('change', function(e) {
+                    if (this.value) {
+                        // 将日期字符串转换为时间戳
+                        var timestamp = new Date(this.value).getTime() / 1000;
+                        
+                        // 保存回放开始时间
+                        tradingState.replayStartTime = timestamp;
+                        
+                        // 使用新的回放范围计算方法
+                        setChartRangeFromTimestamp(timestamp, tradingState.barsCount);
+                        
+                        // 保存当前周期作为原始周期
+                        try {
+                            if (window.widget) {
+                                const symbol_interval = window.widget.symbolInterval();
+                                tradingState.originalInterval = symbol_interval.interval;
+                            }
+                        } catch (e) {
+                            console.error('获取当前图表信息失败:', e);
+                        }
+                        
+                        // 重置回放会话ID
+                        tradingState.replaySessionId = null;
+                        
+                        // 清空交易状态
+                        if (tradingState.inPosition) {
+                            tradingState.inPosition = false;
+                            tradingState.positionType = null;
+                            tradingState.entryPrice = 0;
+                            clearPositionInfo();
+                            toggleTradingButtons(false);
+                        }
+                    }
+                });
+            }
+            
+            // 播放按钮事件
+            if (replayPlayBtn && replayPauseBtn) {
+                replayPlayBtn.addEventListener('click', function() {
+                    var currentMode = replayModeText ? replayModeText.textContent : '';
+                    
+                    //if (currentMode.includes('选择时间') && replayDatetime && replayDatetime.value) {
+                        // 如果是时间模式且已选择时间，先定位到选择时间
+                    //    updateChartVisibleRange(replayDatetime.value);
+                    //}
+                    
+                    // 开始播放
+                    startPlayback();
+                });
+                
+                // 暂停按钮事件
+                replayPauseBtn.addEventListener('click', function() {
+                    stopPlayback();
+                });
+            }
+            
+            // 控制图表显示范围的函数
+            function updateChartVisibleRange(datetimeStr) {
+                if (!window.widget) return;
+                
+                try {
+                    // 将日期字符串转换为时间戳
+                    var timestamp = new Date(datetimeStr).getTime() / 1000;
+                    var chart = window.widget.chart();
+                    
+                    // 获取当前时间周期
+                    var interval = window.widget.chart().resolution();
+                    
+                    // 根据时间周期计算单个bar的秒数
+                    var secondsPerBar = calculateSecondsPerBar(interval);
+                    
+                    // 计算回放结束时间（从开始时间算起，最多显示barsCount根K线）
+                    const replayEndTime = timestamp + (tradingState.barsCount * secondsPerBar);
+                    
+                    // 计算范围 - 显示100根k线，其中99根在当前时间之前，1根在当前时间
+                    var rangeStartTimestamp = timestamp - (99 * secondsPerBar);
+                    var rangeEndTimestamp = timestamp + (1 * secondsPerBar);
+                    
+                    console.log('时间周期: ' + interval + ', 每个bar秒数: ' + secondsPerBar);
+                    console.log('设置范围从 ' + new Date(rangeStartTimestamp * 1000).toLocaleString() + 
+                               ' 到 ' + new Date(rangeEndTimestamp * 1000).toLocaleString());
+                    
+                    // 保存回放时间信息
+                    tradingState.replayStartTime = timestamp;
+                    tradingState.replayEndTime = replayEndTime;
+                    tradingState.currentBarTime = timestamp;
+                    
+                    // 设置可见范围
+                    return chart.setVisibleRange({
+                        from: rangeStartTimestamp,
+                        to: rangeEndTimestamp
+                    }).then(function() {
+                        console.log('图表范围已设置到选择的时间，显示100根K线');
+                        // 更新状态显示
+                        updateReplayStatus();
+                        return { start: rangeStartTimestamp, end: rangeEndTimestamp };
+                    }).catch(function(error) {
+                        console.error('设置图表范围失败:', error);
+                        return null;
+                    });
+                } catch(e) {
+                    console.error('更新图表范围时出错:', e);
+                    return Promise.resolve(null);
+                }
+            }
+            
+            // 记录上一次的范围，用于检测是否真的改变了
+            var lastVisibleRange = null;
+            var noChangeCount = 0;
+            
+            // 移动图表范围的函数（播放时使用）
+            function advanceChartRange(barsToAdvance) {
+                if (!window.widget) return Promise.resolve(null);
+                
+                try {
+                    var chart = window.widget.chart();
+                    var interval = chart.resolution();
+                    var secondsPerBar = calculateSecondsPerBar(interval);
+                    
+                    // 获取当前可见范围 - 笔记：getVisibleRange直接返回对象，不是Promise
+                    var range = chart.getVisibleRange();
+                    if (!range) return Promise.resolve(null);
+                    
+                    // 检查是否和上次范围相同
+                    var rangeChanged = true;
+                    if (lastVisibleRange) {
+                        var timeDiff = Math.abs(range.from - lastVisibleRange.from) + Math.abs(range.to - lastVisibleRange.to);
+                        if (timeDiff < 1) { // 时间差小于1秒认为没有变化
+                            rangeChanged = false;
+                            noChangeCount++;
+                            console.log('检测到范围未变化，连续次数:', noChangeCount);
+                        } else {
+                            noChangeCount = 0;
+                        }
+                    }
+                    
+                    // 如果连续多次没有变化，增加移动量
+                    var actualBarsToAdvance = barsToAdvance;
+                    if (noChangeCount > 0) {
+                        actualBarsToAdvance = barsToAdvance * Math.pow(2, noChangeCount); // 指数增长
+                        console.log('应用补偿倍数:', Math.pow(2, noChangeCount), '实际移动K线数:', actualBarsToAdvance);
+                    }
+                    
+                    // 计算新的范围，向前移动指定数量的bar
+                    var secondsToAdvance = actualBarsToAdvance * secondsPerBar;
+                    var newFrom = range.from + secondsToAdvance;
+                    var newTo = range.to + secondsToAdvance;
+                    
+                    // 检查是否超过回放结束时间
+                    if (tradingState.replayEndTime && newTo > tradingState.replayEndTime) {
+                        console.log('已达到回放结束时间，停止播放');
+                        stopPlayback();
+                        return Promise.resolve(null);
+                    }
+                    
+                    // 更新当前K线时间
+                    tradingState.currentBarTime = newTo;
+                    
+                    console.log('移动范围: 当前从 ' + new Date(range.from * 1000).toLocaleString() + 
+                           ' 到 ' + new Date(range.to * 1000).toLocaleString());
+                    console.log('新范围：从 ' + new Date(newFrom * 1000).toLocaleString() + 
+                           ' 到 ' + new Date(newTo * 1000).toLocaleString());
+                    
+                    // 记录当前范围
+                    lastVisibleRange = {from: range.from, to: range.to};
+                    
+                    // 设置新的可见范围
+                    return chart.setVisibleRange({
+                        from: newFrom,
+                        to: newTo
+                    }).then(function() {
+                        // 验证范围是否真的改变了
+                        setTimeout(function() {
+                            var newRange = chart.getVisibleRange();
+                            if (newRange) {
+                                var actualTimeDiff = Math.abs(newRange.from - range.from) + Math.abs(newRange.to - range.to);
+                                if (actualTimeDiff < 1) {
+                                    console.log('setVisibleRange后范围实际未变化');
+                                } else {
+                                    console.log('setVisibleRange后范围已成功变化');
+                                    noChangeCount = 0; // 重置计数
+                                }
+                            }
+                        }, 100); // 延迟100ms检查
+                        
+                        // 更新状态显示
+                        updateReplayStatus();
+                        return { start: newFrom, end: newTo };
+                    }).catch(function(error) {
+                        console.error('设置图表范围失败:', error);
+                        return null;
+                    });
+                } catch(e) {
+                    console.error('移动图表范围时出错:', e);
+                    return Promise.resolve(null);
+                }
+            }
+            
+            // 开始播放函数
+            function startPlayback() {
+                // 如果已经在播放，先停止
+                if (isPlaying) {
+                    stopPlayback();
+                }
+                
+                // 获取播放速度
+                var speed = parseInt(replaySpeedSel ? replaySpeedSel.value : 1);
+                if (isNaN(speed) || speed < 1) speed = 1;
+                
+                // 切换按钮显示
+                replayPlayBtn.style.display = 'none';
+                replayPauseBtn.style.display = 'inline-block';
+                
+                isPlaying = true;
+                
+                // 每秒前进 speed 根K线
+                playbackInterval = setInterval(function() {
+                    advanceChartRange(speed).then(function(result) {
+                        if (!result) {
+                            console.error('播放失败，无法获取或设置范围');
+                            stopPlayback();
+                        }
+                    });
+                }, 1000); // 每秒1次
+            }
+            
+            // 停止播放函数
+            function stopPlayback() {
+                if (playbackInterval) {
+                    clearInterval(playbackInterval);
+                    playbackInterval = null;
+                }
+                
+                // 切换按钮显示
+                replayPlayBtn.style.display = 'inline-block';
+                replayPauseBtn.style.display = 'none';
+                
+                isPlaying = false;
+            }
+            
+            // 根据时间周期计算每个bar的秒数
+            function calculateSecondsPerBar(interval) {
+                // 解析时间周期字符串
+                var value = parseInt(interval);
+                var unit = interval.replace(/[0-9]/g, '');
+                
+                // 根据单位计算秒数
+                switch(unit) {
+                    case 's': // 秒
+                        return value;
+                    case '': // 分钟 (默认单位)
+                    case 'm': // 分钟
+                        return value * 60;
+                    case 'h': // 小时
+                        return value * 60 * 60;
+                    case 'D': // 天
+                        return value * 86400;
+                    case 'W': // 周
+                        return value * 86400 * 7;
+                    case 'M': // 月 (大约30天)
+                        return value * 86400 * 30;
+                    default: // 默认为分钟
+                        return value * 60;
+                }
+            }
+            
+            // 交易相关功能
+            var buyButton = document.getElementById('buy-button');
+            var sellButton = document.getElementById('sell-button');
+            var closePositionButton = document.getElementById('close-position');
+            var positionType = document.getElementById('position-type');
+            var positionPrice = document.getElementById('position-price');
+            
+            // 交易状态
+            var tradingState = {
+                inPosition: false,
+                positionType: null, // 'long' 或 'short'
+                entryPrice: 0,
+                currentPrice: 0,
+                entryTime: null,   // 入场时间
+                markers: [],        // 存储创建的标记ID，用于管理
+                replaySessionId: null, // 当前回放会话ID
+                originalInterval: null, // 原始时间周期
+                barsCount: 150,     // 回放K线数量
+                replayStartTime: null, // 回放开始时间
+                replayEndTime: null,   // 回放结束时间（新增）
+                currentBarTime: null   // 当前K线时间（新增）
+            };
+            
+            // 状态更新定时器
+            var statusUpdateTimer = null;
+            
+            // 启动状态更新定时器
+            function startStatusUpdateTimer() {
+                if (statusUpdateTimer) {
+                    clearInterval(statusUpdateTimer);
+                }
+                // 每2秒更新一次状态
+                statusUpdateTimer = setInterval(updateReplayStatus, 2000);
+            }
+            
+            // 停止状态更新定时器
+            function stopStatusUpdateTimer() {
+                if (statusUpdateTimer) {
+                    clearInterval(statusUpdateTimer);
+                    statusUpdateTimer = null;
+                }
+            }
+            
+            // 买入按钮事件
+            if (buyButton) {
+                buyButton.addEventListener('click', async function() {
+                    try {
+                        // 获取当前价格 - 现在是异步的
+                        var price = await getCurrentPrice();
+                        tradingState.inPosition = true;
+                        tradingState.positionType = 'long';
+                        tradingState.entryPrice = price;
+                        
+                        // 更新UI
+                        updatePositionInfo('多', price);
+                        toggleTradingButtons(true);
+                        
+                        // 保存当前时间 - 现在也是异步的
+                        tradingState.entryTime = await getCurrentBarTime();
+                        
+                        // 添加买入标记
+                        addBuyMarker(price);
+                        
+                        // 更新状态显示
+                        updateReplayStatus();
+                        
+                        // 启动状态更新定时器
+                        startStatusUpdateTimer();
+                        
+                        // 触发自定义事件
+                        var event = new CustomEvent('position-opened', {
+                            detail: { type: 'long', price: price }
+                        });
+                        document.dispatchEvent(event);
+                    } catch (e) {
+                        console.error('买入操作失败:', e);
+                    }
+                });
+            }
+            
+            // 卖出按钮事件
+            if (sellButton) {
+                sellButton.addEventListener('click', async function() {
+                    try {
+                        // 获取当前价格 - 现在是异步的
+                        var price = await getCurrentPrice();
+                        tradingState.inPosition = true;
+                        tradingState.positionType = 'short';
+                        tradingState.entryPrice = price;
+                        
+                        // 更新UI
+                        updatePositionInfo('空', price);
+                        toggleTradingButtons(true);
+                        
+                        // 保存当前时间 - 现在是异步的
+                        tradingState.entryTime = await getCurrentBarTime();
+                        
+                        // 添加卖出标记
+                        addSellMarker(price);
+                        
+                        // 更新状态显示
+                        updateReplayStatus();
+                        
+                        // 启动状态更新定时器
+                        startStatusUpdateTimer();
+                        
+                        // 触发自定义事件
+                        var event = new CustomEvent('position-opened', {
+                            detail: { type: 'short', price: price }
+                        });
+                        document.dispatchEvent(event);
+                    } catch (e) {
+                        console.error('卖出操作失败:', e);
+                    }
+                });
+            }
+            
+            // 平仓按钮事件
+            if (closePositionButton) {
+                closePositionButton.addEventListener('click', async function() {
+                    try {
+                        // 获取当前价格 - 现在是异步的
+                        var price = await getCurrentPrice();
+                        var pnl = calculatePnL(tradingState.positionType, tradingState.entryPrice, price);
+                        var posType = tradingState.positionType; // 保存当前仓位类型用于绘制标记
+                        var entryPrice = tradingState.entryPrice; // 保存入场价格用于绘制标记
+                        
+                        // 获取当前图表信息
+                        const chart = window.widget.chart();
+                        const symbol_interval = window.widget.symbolInterval();
+                        const symbol = symbol_interval.symbol;
+                        const interval = symbol_interval.interval;
+                        const currentTime = await getCurrentBarTime();
+                        
+                        // 判断是否是首次平仓（没有会话ID）
+                        const isFirstTrade = !tradingState.replaySessionId;
+                        
+                        // 保存交易记录
+                        const tradeData = {
+                            symbol: symbol,
+                            position_type: posType,
+                            entry_time: tradingState.entryTime,
+                            exit_time: currentTime,
+                            entry_price: entryPrice,
+                            exit_price: price,
+                            interval: interval,
+                            pnl: pnl,
+                            timestamp: Math.floor(Date.now() / 1000),
+                            is_first_trade: isFirstTrade,
+                            replay_session_id: tradingState.replaySessionId,
+                            replay_start_time: tradingState.replayStartTime,
+                            bars_count: tradingState.barsCount,
+                            client_id: 'default_client', // 可以从用户配置中获取
+                            user_id: 'default_user'      // 可以从用户配置中获取
+                        };
+                        
+                        // 发送交易记录到服务器
+                        fetch('/save-trade', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify(tradeData)
+                        }).then(response => response.json())
+                        .then(data => {
+                            if (data.status === 'ok') {
+                                console.log('交易记录保存成功');
+                                
+                                // 如果是首次交易，保存返回的会话ID
+                                if (isFirstTrade && data.data && data.data.session_uuid) {
+                                    tradingState.replaySessionId = data.data.session_uuid;
+                                    console.log('新回放会话已创建，ID:', tradingState.replaySessionId);
+                                }
+                            } else {
+                                console.error('交易记录保存失败:', data.message);
+                            }
+                        }).catch(error => {
+                            console.error('保存交易记录时出错:', error);
+                        });
+                        
+                        tradingState.inPosition = false;
+                        tradingState.positionType = null;
+                        tradingState.entryPrice = 0;
+                        
+                        // 更新UI
+                        clearPositionInfo();
+                        toggleTradingButtons(false);
+                        
+                        // 更新状态显示
+                        updateReplayStatus();
+                        
+                        // 停止状态更新定时器
+                        stopStatusUpdateTimer();
+                        
+                        // 添加平仓区域标记 - 现在是异步函数
+                        await addClosePositionMarker(posType, entryPrice, price);
+                    
+                        // 触发自定义事件
+                        var event = new CustomEvent('position-closed', {
+                            detail: { pnl: pnl, exitPrice: price }
+                        });
+                        document.dispatchEvent(event);
+                    } catch (e) {
+                        console.error('平仓操作失败:', e);
+                    }
+                });
+            }
+            
+            // 辅助函数 - 获取当前价格
+            async function getCurrentPrice() {
+                // 尝试从图表获取最新价格 
+                if (window.widget) {
+                    try {
+                        const chart = window.widget.chart();
+                        const visibleRange = chart.getVisibleRange();
+                        
+                        // 如果有可见范围，使用exportData获取最后一根K线数据
+                        if (visibleRange && visibleRange.from && visibleRange.to) {
+                            const data = await chart.exportData({
+                                from: visibleRange.from,
+                                to: visibleRange.to,
+                                includeSeries: true
+                            });
+                            
+                            // 根据TradingView的格式处理返回的数据
+                            // 数据是二维数组，其中每一行代表一根K线
+                            // 通常第4个索引位置(index 4)存储收盘价
+                            if (data && Array.isArray(data.data) && data.data.length > 0) {
+                                const lastIndex = data.data.length - 1;
+                                const lastCandle = data.data[lastIndex];
+                                
+                                // 如果是数组格式，按照OHLCV结构（索引4是收盘价）
+                                return lastCandle[4];
+                            }
+                        }
+                    } catch (e) {
+                        console.error('获取当前价格失败:', e);
+                    }
+                }
+                
+                // 如果无法从图表获取，则使用随机价格模拟
+                return Math.round(Math.random() * 10000) / 100;
+            }
+            
+            function calculatePnL(positionType, entryPrice, currentPrice) {
+                if (positionType === 'long') {
+                    return currentPrice - entryPrice;
+                } else if (positionType === 'short') {
+                    return entryPrice - currentPrice;
+                }
+                return 0;
+            }
+            
+            function updatePositionInfo(typeText, price) {
+                if (positionType && positionPrice) {
+                    positionType.textContent = typeText;
+                    positionPrice.textContent = price.toFixed(2);
+                    positionType.style.color = typeText === '多' ? '#26a69a' : '#ef5350';
+                }
+            }
+            
+            function clearPositionInfo() {
+                if (positionType && positionPrice) {
+                    positionType.textContent = '';
+                    positionPrice.textContent = '';
+                }
+            }
+            
+            function toggleTradingButtons(inPosition) {
+                if (buyButton && sellButton && closePositionButton) {
+                    buyButton.disabled = inPosition;
+                    sellButton.disabled = inPosition;
+                    closePositionButton.disabled = !inPosition;
+                }
+            }
+            
+            function showPnLResult(pnl) {
+                var color = pnl >= 0 ? '#26a69a' : '#ef5350';
+                var sign = pnl >= 0 ? '+' : '';
+                alert('交易结果: ' + sign + pnl.toFixed(2));
+            }
+            
+            // 图表标记相关函数
+            
+            // 添加买入标记（上箭头）
+            async function addBuyMarker(price) {
+                if (!window.widget) return;
+                
+                try {
+                    const chart = window.widget.chart();
+                    const currentTime = await getCurrentBarTime();
+                    
+                    // 记录入场时间
+                    tradingState.entryTime = currentTime;
+                    
+                    // 创建买入标记（向上箭头，绿色）
+                    //const markerId = chart.createShape({ 
+                    //    time: currentTime,
+                    //    price: price,
+                    //    shape: 'arrow_up',
+                    //    text: '买入',
+                    //    lock: true,
+                    //    disableSelection: true,
+                    //    disableSave: false,
+                    //    disableUndo: false,
+                    //    overrides: {
+                    //        color: '#26a69a',   // 绿色
+                    //        textColor: '#26a69a',
+                    //        fontsize: 12,
+                    //        bold: true,
+                    //        size: 2
+                    //    }
+                    //});
+
+                    const markerId = chart.createShape(
+                        { time: currentTime, channel: "low" },
+                        { shape: "arrow_up", text: "Buy" }
+                    );
+                    // 保存标记ID
+                    tradingState.markers.push(markerId);
+                    
+                    console.log('添加买入标记成功，ID:', markerId, '价格:', price, '时间:', new Date(currentTime * 1000).toLocaleString());
+                } catch (e) {
+                    console.error('添加买入标记失败:', e);
+                }
+            }
+            
+            // 添加卖出标记（下箭头）
+            async function addSellMarker(price) {
+                if (!window.widget) return;
+                
+                try {
+                    const chart = window.widget.chart();
+                    const currentTime = await getCurrentBarTime();
+                    
+                    // 记录入场时间
+                    tradingState.entryTime = currentTime;
+                    
+                    // 创建卖出标记（向下箭头，红色）
+                    //const markerId = chart.createShape({ 
+                    //    time: currentTime,
+                    //    price: price,
+                    //    shape: 'arrow_down',
+                    //    text: '卖出',
+                    //    lock: true,
+                    //    disableSelection: true,
+                    //    disableSave: false,
+                    //    disableUndo: false,
+                    //    overrides: {
+                    //        color: '#ef5350',   // 红色
+                    //        textColor: '#ef5350',
+                    //        fontsize: 12,
+                    //        bold: true,
+                    //        size: 2
+                    //    }
+                    //});
+                    
+                    const markerId = chart.createShape(
+                        { time: currentTime, channel: "high" },
+                        { shape: "arrow_down", text: "Sell" }
+                    );
+                    // 保存标记ID
+                    tradingState.markers.push(markerId);
+                    
+                    console.log('添加卖出标记成功，ID:', markerId, '价格:', price, '时间:', new Date(currentTime * 1000).toLocaleString());
+                } catch (e) {
+                    console.error('添加卖出标记失败:', e);
+                }
+            }
+            
+            // 添加平仓区域标记
+            async function addClosePositionMarker(positionType, entryPrice, exitPrice) {
+                if (!window.widget || !tradingState.entryTime) return;
+                
+                try {
+                    const chart = window.widget.chart();
+                    // 获取当前K线时间（现在返回 Promise）
+                    const currentTime = await getCurrentBarTime();
+                    
+                    // 确定颜色（根据盈亏状态使用不同深浅的颜色）
+                    let color;
+                    // 判断是否盈利
+                    const isProfitable = positionType === 'long' ? exitPrice > entryPrice : exitPrice < entryPrice;
+                    
+                    // 根据仓位类型和盈亏状态确定颜色
+                    if (positionType === 'long') {
+                        // 多单：盈利用较浅绿色，亏损用较深绿色
+                        color = isProfitable ? '#4CAF50' : '#1B5E20';
+                    } else {
+                        // 空单：盈利用较浅红色，亏损用较深红色
+                        color = isProfitable ? '#F44336' : '#B71C1C';
+                    }
+                    
+                    const opacity = 0.2; // 透明度
+                    const borderOpacity = 0.8; // 边框透明度
+                    
+                    // 创建区域标记
+                    const markerId = chart.createMultipointShape([
+                        { time: tradingState.entryTime, price: entryPrice },
+                        { time: currentTime, price: exitPrice }
+                    ], {
+                        shape: 'date_and_price_range',
+                        lock: false,
+                        disableSelection: true,
+                        disableSave: false,
+                        disableUndo: false,
+                        zOrder: 'bottom',  // 放在下层
+                        overrides: {
+                            backgroundColor: color,
+                            backgroundTransparency: Math.round(opacity * 100),
+                            borderColor: color,
+                            borderWidth: 1,
+                            borderTransparency: Math.round((1 - borderOpacity) * 100),
+                            extendLeft: false,
+                            extendRight: false
+                        }
+                    });
+                    
+                    // 保存标记ID
+                    tradingState.markers.push(markerId);
+                    
+                    console.log('添加平仓区域标记成功，ID:', markerId, '从时间:', new Date(tradingState.entryTime * 1000).toLocaleString(), 
+                               '到时间:', new Date(currentTime * 1000).toLocaleString());
+                } catch (e) {
+                    console.error('添加平仓区域标记失败:', e);
+                }
+            }
+            
+            // 获取当前K线的时间 - 返回 Promise
+            function getCurrentBarTime() {
+                if (!window.widget) {
+                    return Promise.resolve(Math.floor(Date.now() / 1000));
+                }
+                
+                try {
+                    const chart = window.widget.chart();
+                    
+                    // 使用exportData方法获取最后一根K线
+                    const visibleRange = chart.getVisibleRange();
+                    
+                    // 如果有可见范围，导出数据并获取最后一根K线时间
+                    if (visibleRange && visibleRange.to) {
+                        // 如果有可见范围但无法获取完整数据，使用可见范围的结束时间
+                        return Promise.resolve(visibleRange.to);
+                    } else {
+                        // 如果无法获取可见范围，返回当前时间戳
+                        return Promise.resolve(Math.floor(Date.now() / 1000));
+                    }
+                } catch (e) {
+                    console.error('获取当前K线时间失败:', e);
+                    return Promise.resolve(Math.floor(Date.now() / 1000));
+                }
+            }
+            // 提供全局方法供Replay按钮调用
+            window.toggleReplayMenu = function() {
+                if (menu.style.display === 'none') {
+                    if (!hasMoved) {
+                        // 未拖动过，回到底部居中
+                        menu.style.left = '50%';
+                        menu.style.bottom = '40px';
+                        menu.style.top = 'auto';
+                        menu.style.transform = 'translateX(-50%)';
+                    }
+                    menu.style.display = 'flex';
+                } else {
+                    menu.style.display = 'none';
+                }
+            }
+
+            // 交易统计功能
+            const statsButton = document.getElementById('stats-button');
+            const statsModal = document.getElementById('stats-modal');
+            const statsModalClose = document.getElementById('stats-modal-close');
+            
+            if (statsButton) {
+                statsButton.addEventListener('click', function() {
+                    // 获取当前图表的symbol和interval
+                    let symbol = '';
+                    let interval = '';
+                    
+                    try {
+                        if (window.widget) {
+                            const symbol_interval = window.widget.symbolInterval();
+                            symbol = symbol_interval.symbol;
+                            interval = symbol_interval.interval;
+                        }
+                    } catch (e) {
+                        console.error('获取当前图表信息失败:', e);
+                    }
+                    
+                    // 构建查询URL
+                    const queryParams = new URLSearchParams();
+                    if (symbol) queryParams.append('symbol', symbol);
+                    if (interval) queryParams.append('interval', interval);
+                    
+                    // 请求统计数据
+                    fetch('/trade-statistics?' + queryParams.toString())
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.status === 'ok') {
+                                // 显示统计数据
+                                updateStatsModal(data.data);
+                                // 显示弹窗
+                                statsModal.style.display = 'block';
+                            } else {
+                                console.error('获取交易统计失败:', data.message);
+                                alert('获取交易统计失败: ' + data.message);
+                            }
+                        })
+                        .catch(error => {
+                            console.error('请求交易统计数据时出错:', error);
+                            alert('请求交易统计数据时出错');
+                        });
+                });
+            }
+            
+            // 关闭统计弹窗
+            if (statsModalClose) {
+                statsModalClose.addEventListener('click', function() {
+                    statsModal.style.display = 'none';
+                });
+            }
+            
+            // 点击弹窗外区域关闭弹窗
+            window.addEventListener('click', function(event) {
+                if (event.target === statsModal) {
+                    statsModal.style.display = 'none';
+                }
+                if (event.target === historyModal) {
+                    historyModal.style.display = 'none';
+                }
+            });
+            
+            // 更新统计弹窗内容
+            function updateStatsModal(stats) {
+                document.getElementById('total-trades').textContent = stats.total_trades;
+                document.getElementById('profitable-trades').textContent = stats.profitable_trades;
+                document.getElementById('win-rate').textContent = stats.win_rate + '%';
+                
+                // 设置盈亏值样式
+                const totalPnlElement = document.getElementById('total-pnl');
+                totalPnlElement.textContent = stats.total_pnl > 0 ? '+' + stats.total_pnl.toFixed(2) : stats.total_pnl.toFixed(2);
+                totalPnlElement.className = 'stats-value ' + (stats.total_pnl >= 0 ? 'positive' : 'negative');
+                
+                // 设置盈利率样式
+                const profitRateElement = document.getElementById('profit-rate');
+                profitRateElement.textContent = stats.profit_rate.toFixed(2) + '%';
+                profitRateElement.className = 'stats-value ' + (stats.profit_rate >= 0 ? 'positive' : 'negative');
+            }
+
+            // 历史回放记录功能
+            const historyButton = document.getElementById('history-button');
+            const historyModal = document.getElementById('history-modal');
+            const historyModalClose = document.getElementById('history-modal-close');
+            const historyList = document.getElementById('history-list');
+            const historyLoading = document.getElementById('history-loading');
+            const historyEmpty = document.getElementById('history-empty');
+            
+            // 历史记录分页状态
+            const historyState = {
+                page: 1,
+                pageSize: 10,
+                loading: false,
+                hasMore: true,
+                total: 0,
+                client_id: 'default_client', // 可以从用户配置中获取
+                user_id: 'default_user'      // 可以从用户配置中获取
+            };
+            
+            // 打开历史记录弹窗
+            if (historyButton) {
+                historyButton.addEventListener('click', function() {
+                    // 显示弹窗
+                    historyModal.style.display = 'block';
+                    
+                    // 重置分页状态
+                    historyState.page = 1;
+                    historyState.hasMore = true;
+                    historyList.innerHTML = '';
+                    
+                    // 加载第一页数据
+                    loadHistoryData();
+                });
+            }
+            
+            // 关闭历史记录弹窗
+            if (historyModalClose) {
+                historyModalClose.addEventListener('click', function() {
+                    historyModal.style.display = 'none';
+                });
+            }
+            
+            // 加载历史记录数据
+            function loadHistoryData() {
+                if (historyState.loading || !historyState.hasMore) return;
+                
+                historyState.loading = true;
+                historyLoading.style.display = 'flex';
+                historyEmpty.style.display = 'none';
+                
+                // 构建查询参数
+                const queryParams = new URLSearchParams();
+                queryParams.append('page', historyState.page);
+                queryParams.append('page_size', historyState.pageSize);
+                if (historyState.client_id) queryParams.append('client_id', historyState.client_id);
+                if (historyState.user_id) queryParams.append('user_id', historyState.user_id);
+                
+                // 请求历史记录数据
+                fetch('/api/replay/sessions?' + queryParams.toString())
+                    .then(response => response.json())
+                    .then(data => {
+                        historyState.loading = false;
+                        historyLoading.style.display = 'none';
+                        
+                        if (data.status === 'ok') {
+                            // 更新总数和分页信息
+                            historyState.total = data.total;
+                            historyState.hasMore = historyState.page * historyState.pageSize < data.total;
+                            
+                            // 显示数据
+                            if (data.data.length === 0 && historyState.page === 1) {
+                                // 没有数据
+                                historyEmpty.style.display = 'block';
+                            } else {
+                                // 渲染历史记录列表
+                                renderHistoryItems(data.data);
+                                
+                                // 更新页码
+                                historyState.page++;
+                            }
+                        } else {
+                            console.error('获取历史记录失败:', data.message);
+                            alert('获取历史记录失败: ' + data.message);
+                        }
+                    })
+                    .catch(error => {
+                        historyState.loading = false;
+                        historyLoading.style.display = 'none';
+                        console.error('请求历史记录数据时出错:', error);
+                        alert('请求历史记录数据时出错');
+                    });
+            }
+            
+            // 渲染历史记录项
+            function renderHistoryItems(items) {
+                items.forEach(item => {
+                    const historyItem = createHistoryItem(item);
+                    historyList.appendChild(historyItem);
+                });
+            }
+            
+            // 创建历史记录项元素
+            function createHistoryItem(item) {
+                const itemElement = document.createElement('div');
+                itemElement.className = 'history-item';
+                
+                // 格式化日期时间
+                const startDate = formatTimestamp(item.start_time);
+                const endDate = item.end_time ? formatTimestamp(item.end_time) : '至今';
+                
+                // 创建头部
+                const header = document.createElement('div');
+                header.className = 'history-item-header';
+                
+                const symbol = document.createElement('div');
+                symbol.className = 'history-item-symbol';
+                symbol.textContent = item.symbol + ' (' + item.interval + ')';
+                
+                const date = document.createElement('div');
+                date.className = 'history-item-date';
+                date.textContent = startDate + ' 至 ' + endDate;
+                
+                header.appendChild(symbol);
+                header.appendChild(date);
+                
+                // 创建详情部分
+                const details = document.createElement('div');
+                details.className = 'history-item-details';
+                
+                // 添加详情项
+                addDetailItem(details, '价格变动', formatPriceChange(item.price_start, item.price_end, item.price_change_percent));
+                addDetailItem(details, '总盈亏', formatPnL(item.total_pnl));
+                addDetailItem(details, '交易次数', item.trade_count || 0);
+                addDetailItem(details, '持仓时长', formatHoldingTime(item.hold_time_length));
+                
+                // 创建操作按钮
+                const actions = document.createElement('div');
+                actions.className = 'history-item-actions';
+                
+                const replayButton = document.createElement('button');
+                replayButton.className = 'history-action-btn history-action-replay';
+                replayButton.textContent = '重放';
+                replayButton.addEventListener('click', function() {
+                    replayHistorySession(item);
+                });
+                
+                actions.appendChild(replayButton);
+                
+                // 组装历史记录项
+                itemElement.appendChild(header);
+                itemElement.appendChild(details);
+                itemElement.appendChild(actions);
+                
+                return itemElement;
+            }
+            
+            // 添加详情项
+            function addDetailItem(container, label, value, valueClass = '') {
+                const detailItem = document.createElement('div');
+                detailItem.className = 'history-detail';
+                
+                const labelElement = document.createElement('span');
+                labelElement.className = 'history-detail-label';
+                labelElement.textContent = label;
+                
+                const valueElement = document.createElement('span');
+                valueElement.className = 'history-detail-value ' + valueClass;
+                valueElement.innerHTML = value; // 使用innerHTML支持HTML格式
+                
+                detailItem.appendChild(labelElement);
+                detailItem.appendChild(valueElement);
+                
+                container.appendChild(detailItem);
+            }
+            
+            // 格式化时间戳为可读日期
+            function formatTimestamp(timestamp) {
+                if (!timestamp) return '';
+                const date = new Date(timestamp * 1000);
+                return date.toLocaleString();
+            }
+            
+            // 格式化价格变动
+            function formatPriceChange(startPrice, endPrice, changePercent) {
+                if (!startPrice || !endPrice) return 'N/A';
+                
+                const change = endPrice - startPrice;
+                const sign = change >= 0 ? '+' : '';
+                const percentStr = changePercent ? 
+                    `(${sign}${changePercent.toFixed(2)}%)` : 
+                    `(${sign}${((change / startPrice) * 100).toFixed(2)}%)`;
+                
+                const valueClass = change >= 0 ? 'positive' : 'negative';
+                
+                return `${sign}${change.toFixed(2)} ${percentStr}`;
+            }
+            
+            // 格式化盈亏
+            function formatPnL(pnl) {
+                if (pnl === undefined || pnl === null) return 'N/A';
+                
+                const sign = pnl >= 0 ? '+' : '';
+                const valueClass = pnl >= 0 ? 'positive' : 'negative';
+                
+                return `<span class="${valueClass}">${sign}${pnl.toFixed(2)}</span>`;
+            }
+            
+            // 格式化持仓时间
+            function formatHoldingTime(seconds) {
+                if (!seconds) return 'N/A';
+                
+                if (seconds < 60) {
+                    return `${seconds}秒`;
+                } else if (seconds < 3600) {
+                    return `${Math.floor(seconds / 60)}分钟`;
+                } else if (seconds < 86400) {
+                    return `${Math.floor(seconds / 3600)}小时${Math.floor((seconds % 3600) / 60)}分钟`;
+                } else {
+                    return `${Math.floor(seconds / 86400)}天${Math.floor((seconds % 86400) / 3600)}小时`;
+                }
+            }
+            
+            // 重放历史会话
+            function replayHistorySession(session) {
+                // 关闭历史记录弹窗
+                historyModal.style.display = 'none';
+                
+                // 打开回放菜单
+                menu.style.display = 'flex';
+                // 设置周期
+                const chart = window.widget.chart();
+                // 切换到对应的交易对和周期
+                chart.setSymbol(session.symbol, function() {
+                    console.log('交易对切换成功:', session.symbol);
+                    chart.setResolution(session.interval, function() {
+                        console.log('时间周期设置成功:', session.interval);
+                        
+                        // 设置图表范围
+                        setChartRangeFromTimestamp(session.start_time, session.bars_count || 150);
+                        
+                        // 保存回放相关信息
+                        tradingState.replaySessionId = session.session_uuid;
+                        tradingState.replayStartTime = session.start_time;
+                        tradingState.barsCount = session.bars_count || 150;
+                        tradingState.originalInterval = session.interval;
+                        
+                        // 计算回放结束时间
+                        const chart = window.widget.chart();
+                        const interval = chart.resolution();
+                        const secondsPerBar = calculateSecondsPerBar(interval);
+                        tradingState.replayEndTime = session.start_time + (session.bars_count || 150) * secondsPerBar;
+                        tradingState.currentBarTime = session.start_time;
+                        
+                        // 清空交易状态
+                        if (tradingState.inPosition) {
+                            tradingState.inPosition = false;
+                            tradingState.positionType = null;
+                            tradingState.entryPrice = 0;
+                            clearPositionInfo();
+                            toggleTradingButtons(false);
+                        }
+                        
+                        // 加载交易记录并添加标记
+                        loadTradesAndAddMarkers(session.session_uuid);
+                    });
+                });
+            }
+            
+            // 加载交易记录并添加标记
+            function loadTradesAndAddMarkers(sessionId) {
+                if (!sessionId || !window.widget) return;
+                
+                // 请求会话详情，包含交易记录
+                fetch(`/api/replay/sessions/${sessionId}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'ok' && data.data && data.data.trades) {
+                            const trades = data.data.trades;
+                            console.log(`加载到 ${trades.length} 条交易记录`);
+                            
+                            // 清除现有的标记
+                            clearAllMarkers();
+                            
+                            // 添加交易标记
+                            trades.forEach(trade => {
+                                addHistoricalTradeMarkers(trade);
+                            });
+                        } else {
+                            console.error('未能加载交易记录:', data.message || '未知错误');
+                        }
+                    })
+                    .catch(error => {
+                        console.error('加载交易记录失败:', error);
+                    });
+            }
+            
+            // 清除所有标记
+            function clearAllMarkers() {
+                if (!window.widget) return;
+                
+                try {
+                    const chart = window.widget.chart();
+                    
+                    // 如果有保存的标记，清除它们
+                    if (tradingState.markers && tradingState.markers.length > 0) {
+                        tradingState.markers.forEach(markerId => {
+                            try {
+                                chart.removeEntity(markerId);
+                            } catch (e) {
+                                console.warn('删除标记失败:', e);
+                            }
+                        });
+                        
+                        // 重置标记数组
+                        tradingState.markers = [];
+                    }
+                } catch (e) {
+                    console.error('清除标记时出错:', e);
+                }
+            }
+            
+            // 为历史交易添加标记
+            async function addHistoricalTradeMarkers(trade) {
+                if (!window.widget) return;
+
+                try {
+                    const chart = window.widget.chart();
+
+                    // 添加入场标记
+                    let entryMarkerId;
+                    if (trade.position_type === 'long') {
+                        // 多单入场标记（向上箭头，绿色）
+                        entryMarkerId = await chart.createShape(
+                            { time: trade.entry_time, channel: "low" },
+                            { shape: "arrow_up", text: "Buy" }
+                        );
+                    } else {
+                        // 空单入场标记（向下箭头，红色）
+                        entryMarkerId = await chart.createShape(
+                            { time: trade.entry_time, channel: "high" },
+                            { shape: "arrow_down", text: "Sell" }
+                        );
+                    }
+
+                    // 保存标记ID
+                    if (entryMarkerId) {
+                        tradingState.markers.push(entryMarkerId);
+                    }
+
+                    // 确定交易区域颜色（根据盈亏状态）
+                    const isProfitable = trade.pnl > 0;
+                    let color;
+
+                    // 根据仓位类型和盈亏状态确定颜色
+                    if (trade.position_type === 'long') {
+                        // 多单：盈利用较浅绿色，亏损用较深绿色
+                        color = isProfitable ? '#4CAF50' : '#1B5E20';
+                    } else {
+                        // 空单：盈利用较浅红色，亏损用较深红色
+                        color = isProfitable ? '#F44336' : '#B71C1C';
+                    }
+
+                    const opacity = 0.2; // 透明度
+                    const borderOpacity = 0.8; // 边框透明度
+
+                    // 添加交易区域标记
+                    const areaMarkerId = await chart.createMultipointShape([
+                        { time: trade.entry_time, price: trade.entry_price },
+                        { time: trade.exit_time, price: trade.exit_price }
+                    ], {
+                        shape: 'date_and_price_range',
+                        lock: true,
+                        disableSelection: true,
+                        disableSave: false,
+                        disableUndo: false,
+                        zOrder: 'bottom',  // 放在下层
+                        overrides: {
+                            backgroundColor: color,
+                            backgroundTransparency: Math.round(opacity * 100),
+                            borderColor: color,
+                            borderWidth: 1,
+                            borderTransparency: Math.round((1 - borderOpacity) * 100),
+                            extendLeft: false,
+                            extendRight: false,
+                            text: `PnL: ${trade.pnl > 0 ? '+' : ''}${trade.pnl.toFixed(2)}`
+                        }
+                    });
+
+                    if (areaMarkerId) {
+                        tradingState.markers.push(areaMarkerId);
+                    }
+                    
+                    console.log('历史交易标记添加成功');
+                } catch (e) {
+                    console.error('添加历史交易标记失败:', e);
+                }
+            }
+            
+            // 监听模态框滚动，实现下滑加载更多
+            if (historyModal) {
+                const modalBody = historyModal.querySelector('.modal-body');
+                if (modalBody) {
+                    modalBody.addEventListener('scroll', function() {
+                        // 计算滚动位置
+                        const scrollHeight = modalBody.scrollHeight;
+                        const scrollTop = modalBody.scrollTop;
+                        const clientHeight = modalBody.clientHeight;
+                        
+                        // 当滚动到底部时加载更多
+                        if (scrollHeight - scrollTop - clientHeight < 50 && historyState.hasMore && !historyState.loading) {
+                            loadHistoryData();
+                        }
+                    });
+                }
+            }
+
+            // 监听图表周期变化
+            window.widget.onChartReady(function() {
+                const chart = window.widget.chart();
+                
+                // 监听周期变化
+                chart.onIntervalChanged().subscribe(null, function(interval) {
+                    console.log('图表周期已变更为:', interval);
+                    
+                    // 如果有原始周期且与当前不同，显示恢复按钮
+                    const restoreButton = document.getElementById('restore-interval');
+                    if (tradingState.originalInterval && interval !== tradingState.originalInterval) {
+                        if (restoreButton) {
+                            restoreButton.style.display = 'inline-block';
+                        }
+                    } else {
+                        if (restoreButton) {
+                            restoreButton.style.display = 'none';
+                        }
+                    }
+                });
+                
+                // 监听交易对变化
+                chart.onSymbolChanged().subscribe(null, function(symbolInfo) {
+                    console.log('交易对已变更为:', symbolInfo.name);
+                    
+                    // 如果在回放中且有回放会话，则视为新的回放会话
+                    if (menu.style.display !== 'none') {
+                        // 重置回放会话ID
+                        tradingState.replaySessionId = null;
+                        
+                        // 清空交易状态
+                        if (tradingState.inPosition) {
+                            tradingState.inPosition = false;
+                            tradingState.positionType = null;
+                            tradingState.entryPrice = 0;
+                            clearPositionInfo();
+                            toggleTradingButtons(false);
+                        }
+                        
+                        // 如果是随机模式，重新请求随机回放起始点
+                        if (replayModeText && replayModeText.textContent.includes('随机K线')) {
+                            requestRandomReplayPoint();
+                        }
+                    }
+                });
+            });
+            
+            // 恢复原始周期按钮
+            const restoreIntervalButton = document.getElementById('restore-interval');
+            if (restoreIntervalButton) {
+                restoreIntervalButton.addEventListener('click', function() {
+                    if (tradingState.originalInterval) {
+                        // 恢复到原始周期
+                        const chart = window.widget.chart();
+                        chart.setResolution(tradingState.originalInterval);
+                        
+                        // 隐藏按钮
+                        this.style.display = 'none';
+                        
+                        // 如果有回放起始时间，重新设置范围
+                        if (tradingState.replayStartTime) {
+                            setChartRangeFromTimestamp(tradingState.replayStartTime, tradingState.barsCount);
+                        }
+                    }
+                });
+            }
+
+            // 更新回放状态显示
+            async function updateReplayStatus() {
+                const remainingBarsElement = document.getElementById('remaining-bars-value');
+                const currentPnlElement = document.getElementById('current-pnl-value');
+                const currentPnlContainer = document.getElementById('current-pnl');
+                
+                // 更新剩余K线数
+                if (remainingBarsElement && tradingState.replayEndTime) {
+                    try {
+                        const chart = window.widget.chart();
+                        const interval = chart.resolution();
+                        const secondsPerBar = calculateSecondsPerBar(interval);
+                        
+                        // 获取当前K线时间
+                        let currentBarTime = tradingState.currentBarTime;
+                        if (!currentBarTime) {
+                            const visibleRange = chart.getVisibleRange();
+                            if (visibleRange && visibleRange.to) {
+                                currentBarTime = visibleRange.to;
+                            } else {
+                                currentBarTime = Math.floor(Date.now() / 1000);
+                            }
+                        }
+                        
+                        // 计算剩余K线数
+                        const remainingSeconds = tradingState.replayEndTime - currentBarTime;
+                        const remainingBars = Math.max(0, Math.floor(remainingSeconds / secondsPerBar));
+                        
+                        remainingBarsElement.textContent = remainingBars;
+                        
+                        // 根据剩余数量设置颜色
+                        if (remainingBars <= 10) {
+                            remainingBarsElement.className = 'status-value warning';
+                        } else if (remainingBars <= 50) {
+                            remainingBarsElement.className = 'status-value';
+                        } else {
+                            remainingBarsElement.className = 'status-value';
+                        }
+                    } catch (e) {
+                        console.error('更新剩余K线数失败:', e);
+                        remainingBarsElement.textContent = '--';
+                    }
+                }
+                
+                // 更新当前盈亏（如果有持仓）
+                if (currentPnlElement && currentPnlContainer && tradingState.inPosition) {
+                    try {
+                        const currentPrice = await getCurrentPrice();
+                        const pnl = calculatePnL(tradingState.positionType, tradingState.entryPrice, currentPrice);
+                        const pnlPercent = (pnl / tradingState.entryPrice) * 100;
+                        
+                        currentPnlElement.textContent = `${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)} (${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}%)`;
+                        currentPnlElement.className = 'status-value ' + (pnl >= 0 ? 'positive' : 'negative');
+                        currentPnlContainer.style.display = 'flex';
+                    } catch (e) {
+                        console.error('更新盈亏显示失败:', e);
+                        currentPnlContainer.style.display = 'none';
+                    }
+                } else if (currentPnlContainer) {
+                    currentPnlContainer.style.display = 'none';
+                }
+            }
+        })();
+    </script>
+</body>
+
 </html>
