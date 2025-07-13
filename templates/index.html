@@ -1033,9 +1033,11 @@
                                 
                                 // 如果返回了不同的symbol，需要切换
                                 if (data.data.symbol && data.data.symbol !== symbol) {
-                                    // 切换交易对
-                                    window.widget.setSymbol(data.data.symbol, function() {
-                                        console.log('交易对切换成功，设置回放范围');
+                                    // 切换交易对 (使用 chart.setSymbol)
+                                    console.log(`[诊断日志] 准备切换交易对到: ${data.data.symbol}`);
+                                    const chart = window.widget.chart();
+                                    chart.setSymbol(data.data.symbol, function() {
+                                        console.log(`[诊断日志] 交易对切换成功: ${data.data.symbol}，现在设置回放范围`);
                                         // 设置图表范围
                                         setChartRangeFromTimestamp(data.data.start_time, data.data.bars_count);
                                     });
@@ -1084,7 +1086,7 @@
                         const rangeStartTimestamp = timestamp - (99 * secondsPerBar);
                         const rangeEndTimestamp = timestamp + (1 * secondsPerBar);
                         
-                        console.log('设置回放范围 - 时间周期:', interval, 
+                        console.log('设置回放范围 - 时间周期:', interval,
                                   '开始时间:', new Date(timestamp * 1000).toLocaleString(),
                                   '结束时间:', new Date(replayEndTime * 1000).toLocaleString(),
                                   'K线数量:', barsCount);
@@ -1095,6 +1097,9 @@
                         tradingState.barsCount = barsCount;
                         tradingState.currentBarTime = timestamp;
                         
+                        // 保存期望的范围
+                        tradingState.expectedVisibleRange = { from: rangeStartTimestamp, to: rangeEndTimestamp };
+
                         // 设置可见范围
                         return chart.setVisibleRange({
                             from: rangeStartTimestamp,
@@ -1251,14 +1256,17 @@
                     var rangeEndTimestamp = timestamp + (1 * secondsPerBar);
                     
                     console.log('时间周期: ' + interval + ', 每个bar秒数: ' + secondsPerBar);
-                    console.log('设置范围从 ' + new Date(rangeStartTimestamp * 1000).toLocaleString() + 
+                    console.log('设置范围从 ' + new Date(rangeStartTimestamp * 1000).toLocaleString() +
                                ' 到 ' + new Date(rangeEndTimestamp * 1000).toLocaleString());
                     
                     // 保存回放时间信息
                     tradingState.replayStartTime = timestamp;
                     tradingState.replayEndTime = replayEndTime;
                     tradingState.currentBarTime = timestamp;
-                    
+
+                    // 保存期望的范围
+                    tradingState.expectedVisibleRange = { from: rangeStartTimestamp, to: rangeEndTimestamp };
+
                     // 设置可见范围
                     return chart.setVisibleRange({
                         from: rangeStartTimestamp,
@@ -1278,90 +1286,57 @@
                 }
             }
             
-            // 记录上一次的范围，用于检测是否真的改变了
-            var lastVisibleRange = null;
-            var noChangeCount = 0;
-            
             // 移动图表范围的函数（播放时使用）
             function advanceChartRange(barsToAdvance) {
                 if (!window.widget) return Promise.resolve(null);
-                
+
                 try {
                     var chart = window.widget.chart();
                     var interval = chart.resolution();
                     var secondsPerBar = calculateSecondsPerBar(interval);
-                    
-                    // 获取当前可见范围 - 笔记：getVisibleRange直接返回对象，不是Promise
-                    var range = chart.getVisibleRange();
-                    if (!range) return Promise.resolve(null);
-                    
-                    // 检查是否和上次范围相同
-                    var rangeChanged = true;
-                    if (lastVisibleRange) {
-                        var timeDiff = Math.abs(range.from - lastVisibleRange.from) + Math.abs(range.to - lastVisibleRange.to);
-                        if (timeDiff < 1) { // 时间差小于1秒认为没有变化
-                            rangeChanged = false;
-                            noChangeCount++;
-                            console.log('检测到范围未变化，连续次数:', noChangeCount);
-                        } else {
-                            noChangeCount = 0;
-                        }
+
+                    // 使用我们自己维护的期望范围，而不是从图表获取
+                    var range = tradingState.expectedVisibleRange;
+                    if (!range) {
+                        console.error('无法前进，期望的范围未设置');
+                        stopPlayback(); // 停止播放以免死循环
+                        return Promise.resolve(null);
                     }
-                    
-                    // 如果连续多次没有变化，增加移动量
-                    var actualBarsToAdvance = barsToAdvance;
-                    if (noChangeCount > 0) {
-                        actualBarsToAdvance = barsToAdvance * Math.pow(2, noChangeCount); // 指数增长
-                        console.log('应用补偿倍数:', Math.pow(2, noChangeCount), '实际移动K线数:', actualBarsToAdvance);
-                    }
-                    
+
                     // 计算新的范围，向前移动指定数量的bar
-                    var secondsToAdvance = actualBarsToAdvance * secondsPerBar;
+                    var secondsToAdvance = barsToAdvance * secondsPerBar;
                     var newFrom = range.from + secondsToAdvance;
                     var newTo = range.to + secondsToAdvance;
-                    
+
                     // 检查是否超过回放结束时间
                     if (tradingState.replayEndTime && newTo > tradingState.replayEndTime) {
                         console.log('已达到回放结束时间，停止播放');
                         stopPlayback();
                         return Promise.resolve(null);
                     }
-                    
+
                     // 更新当前K线时间
                     tradingState.currentBarTime = newTo;
-                    
-                    console.log('移动范围: 当前从 ' + new Date(range.from * 1000).toLocaleString() + 
-                           ' 到 ' + new Date(range.to * 1000).toLocaleString());
-                    console.log('新范围：从 ' + new Date(newFrom * 1000).toLocaleString() + 
-                           ' 到 ' + new Date(newTo * 1000).toLocaleString());
-                    
-                    // 记录当前范围
-                    lastVisibleRange = {from: range.from, to: range.to};
-                    
+
+                    console.log('移动范围: 期望从 ' + new Date(range.from * 1000).toLocaleString() +
+                                ' 到 ' + new Date(range.to * 1000).toLocaleString());
+                    console.log('新范围：从 ' + new Date(newFrom * 1000).toLocaleString() +
+                                ' 到 ' + new Date(newTo * 1000).toLocaleString());
+
+                    // 更新我们期望的范围
+                    tradingState.expectedVisibleRange = { from: newFrom, to: newTo };
+
                     // 设置新的可见范围
                     return chart.setVisibleRange({
                         from: newFrom,
                         to: newTo
                     }).then(function() {
-                        // 验证范围是否真的改变了
-                        setTimeout(function() {
-                            var newRange = chart.getVisibleRange();
-                            if (newRange) {
-                                var actualTimeDiff = Math.abs(newRange.from - range.from) + Math.abs(newRange.to - range.to);
-                                if (actualTimeDiff < 1) {
-                                    console.log('setVisibleRange后范围实际未变化');
-                                } else {
-                                    console.log('setVisibleRange后范围已成功变化');
-                                    noChangeCount = 0; // 重置计数
-                                }
-                            }
-                        }, 100); // 延迟100ms检查
-                        
                         // 更新状态显示
                         updateReplayStatus();
                         return { start: newFrom, end: newTo };
                     }).catch(function(error) {
                         console.error('设置图表范围失败:', error);
+                        // 如果设置失败，我们应该回滚期望的范围吗？暂时不，让它继续尝试
                         return null;
                     });
                 } catch(e) {
@@ -1453,12 +1428,13 @@
                 currentPrice: 0,
                 entryTime: null,   // 入场时间
                 markers: [],        // 存储创建的标记ID，用于管理
-                replaySessionId: null, // 当前回放会话ID
+                replaySessionId: null, // 当前回放会a会话ID
                 originalInterval: null, // 原始时间周期
                 barsCount: 150,     // 回放K线数量
                 replayStartTime: null, // 回放开始时间
                 replayEndTime: null,   // 回放结束时间（新增）
-                currentBarTime: null   // 当前K线时间（新增）
+                currentBarTime: null,   // 当前K线时间（新增）
+                expectedVisibleRange: null // 期望的可见范围，用于解决播放卡住问题
             };
             
             // 状态更新定时器
