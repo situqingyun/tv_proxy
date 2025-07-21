@@ -386,13 +386,37 @@
                 <span class="status-label">盈亏:</span>
                 <span id="current-pnl-value" class="status-value">--</span>
             </div>
+            <div id="account-balance" class="status-item" title="账户总览">
+                <span class="status-label">余额:</span>
+                <span id="account-balance-value" class="status-value">10000.00</span>
+            </div>
         </div>
         <div class="replay-divider"></div>
         <!-- 交易控制区 -->
         <div id="trading-controls">
-            <button id="buy-button" class="trade-button buy" title="做多">买入</button>
-            <button id="sell-button" class="trade-button sell" title="做空">卖出</button>
-            <button id="close-position" class="trade-button close" title="平仓" disabled>平仓</button>
+            <!-- 投入金额 -->
+            <div class="trade-input-group">
+                <label for="invest-amount">投入</label>
+                <input type="number" id="invest-amount" value="100">
+                <span>USDT</span>
+            </div>
+
+            <!-- 杠杆选择 -->
+            <div class="trade-input-group">
+                <label for="leverage-selector">杠杆</label>
+                <select id="leverage-selector">
+                    <option value="1">1x</option>
+                    <option value="5">5x</option>
+                    <option value="10">10x</option>
+                    <option value="20">20x</option>
+                    <option value="50">50x</option>
+                    <option value="100">100x</option>
+                </select>
+            </div>
+
+            <button id="buy-button" class="trade-button buy">买入</button>
+            <button id="sell-button" class="trade-button sell">卖出</button>
+            <button id="close-position" class="trade-button close" disabled>平仓</button>
             <div id="position-info" class="position-info">
                 <span id="position-type"></span>
                 <span id="position-price"></span>
@@ -589,6 +613,33 @@
             font-size: 12px;
             color: white;
             border: 1px solid #3a3f4b;
+        }
+        .trade-input-group {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            background: #23272e;
+            padding: 4px 8px;
+            border-radius: 4px;
+            color: #fff;
+        }
+        .trade-input-group label {
+            font-size: 12px;
+            color: #9ea5b0;
+        }
+        .trade-input-group input,
+        .trade-input-group select {
+            background: #1e2228;
+            border: 1px solid #3a3f4b;
+            color: #fff;
+            border-radius: 4px;
+            padding: 4px;
+            width: 60px;
+            text-align: right;
+        }
+        .trade-input-group span {
+            font-size: 12px;
+            color: #9ea5b0;
         }
         .replay-divider {
             width: 1px;
@@ -906,7 +957,9 @@
             // 关闭按钮
             var replayCloseBtn = document.getElementById('replay-close');
             if (replayCloseBtn) {
-                replayCloseBtn.onclick = function() {
+                replayCloseBtn.onclick = async function() {
+                    // 在关闭回放菜单时结束当前会话
+                    await finishCurrentReplaySession();
                     menu.style.display = 'none';
                 };
             }
@@ -997,7 +1050,10 @@
                 }
                 
                 // 请求随机回放起始点
-                function requestRandomReplayPoint() {
+                async function requestRandomReplayPoint() {
+                    // 结束当前回放会话（如果有的话）
+                    await finishCurrentReplaySession();
+                    
                     // 获取当前symbol和interval
                     let symbol = '';
                     let interval = '';
@@ -1046,8 +1102,7 @@
                                     setChartRangeFromTimestamp(data.data.start_time, data.data.bars_count);
                                 }
                                 
-                                // 重置回放会话ID
-                                tradingState.replaySessionId = null;
+                                // 回放会话ID已在finishCurrentReplaySession中重置
                                 
                                 // 清空交易状态
                                 if (tradingState.inPosition) {
@@ -1108,6 +1163,8 @@
                             console.log('图表范围已设置');
                             // 更新状态显示
                             updateReplayStatus();
+                            // 记录市场起始价格
+                            recordMarketPrice('start');
                             return { start: rangeStartTimestamp, end: rangeEndTimestamp };
                         }).catch(function(error) {
                             console.error('设置图表范围失败:', error);
@@ -1177,8 +1234,11 @@
             
             // 日期时间选择器变化事件
             if (replayDatetime) {
-                replayDatetime.addEventListener('change', function(e) {
+                replayDatetime.addEventListener('change', async function(e) {
                     if (this.value) {
+                        // 结束当前回放会话（如果有的话）
+                        await finishCurrentReplaySession();
+                        
                         // 将日期字符串转换为时间戳
                         var timestamp = new Date(this.value).getTime() / 1000;
                         
@@ -1198,8 +1258,7 @@
                             console.error('获取当前图表信息失败:', e);
                         }
                         
-                        // 重置回放会话ID
-                        tradingState.replaySessionId = null;
+                        // 回放会话ID已在finishCurrentReplaySession中重置
                         
                         // 清空交易状态
                         if (tradingState.inPosition) {
@@ -1275,6 +1334,8 @@
                         console.log('图表范围已设置到选择的时间，显示100根K线');
                         // 更新状态显示
                         updateReplayStatus();
+                        // 记录市场起始价格
+                        recordMarketPrice('start');
                         return { start: rangeStartTimestamp, end: rangeEndTimestamp };
                     }).catch(function(error) {
                         console.error('设置图表范围失败:', error);
@@ -1311,6 +1372,8 @@
                     // 检查是否超过回放结束时间
                     if (tradingState.replayEndTime && newTo > tradingState.replayEndTime) {
                         console.log('已达到回放结束时间，停止播放');
+                        // 结束当前回放会话
+                        finishCurrentReplaySession();
                         stopPlayback();
                         return Promise.resolve(null);
                     }
@@ -1421,20 +1484,31 @@
             var positionPrice = document.getElementById('position-price');
             
             // 交易状态
+            var investAmountInput = document.getElementById('invest-amount');
+            var leverageSelector = document.getElementById('leverage-selector');
+            var accountBalanceValue = document.getElementById('account-balance-value');
+
             var tradingState = {
+                accountBalance: 10000.00, // 初始账户余额
                 inPosition: false,
-                positionType: null, // 'long' 或 'short'
-                entryPrice: 0,
-                currentPrice: 0,
-                entryTime: null,   // 入场时间
-                markers: [],        // 存储创建的标记ID，用于管理
-                replaySessionId: null, // 当前回放会a会话ID
-                originalInterval: null, // 原始时间周期
-                barsCount: 150,     // 回放K线数量
-                replayStartTime: null, // 回放开始时间
-                replayEndTime: null,   // 回放结束时间（新增）
-                currentBarTime: null,   // 当前K线时间（新增）
-                expectedVisibleRange: null // 期望的可见范围，用于解决播放卡住问题
+                position: {
+                    type: null, // 'long' or 'short'
+                    entryPrice: 0,
+                    entryTime: null,
+                    margin: 0, // 投入的保证金
+                    leverage: 1, // 杠杆倍数
+                    quantity: 0, // 开仓数量
+                    liquidationPrice: 0, // 强平价格
+                },
+                liquidationLine: null, // 强平线的引用
+                markers: [],
+                replaySessionId: null,
+                originalInterval: null,
+                barsCount: 150,
+                replayStartTime: null,
+                replayEndTime: null,
+                currentBarTime: null,
+                expectedVisibleRange: null
             };
             
             // 状态更新定时器
@@ -1460,27 +1534,50 @@
             // 买入按钮事件
             if (buyButton) {
                 buyButton.addEventListener('click', async function() {
+                    if (tradingState.inPosition) return;
+
                     try {
-                        // 获取当前价格 - 现在是异步的
-                        var price = await getCurrentPrice();
+                        const margin = parseFloat(investAmountInput.value);
+                        const leverage = parseInt(leverageSelector.value);
+                        const price = await getCurrentPrice();
+
+                        if (isNaN(margin) || margin <= 0) {
+                            alert('请输入有效的投入金额');
+                            return;
+                        }
+                        if (margin > tradingState.accountBalance) {
+                            alert('投入金额不能超过账户余额');
+                            return;
+                        }
+
+                        // 更新账户余额
+                        tradingState.accountBalance -= margin;
+                        await updateAccountBalanceUI();
+
+                        // 计算仓位
+                        const positionValue = margin * leverage;
+                        const quantity = positionValue / price;
+
+                        // 更新持仓状态
                         tradingState.inPosition = true;
-                        tradingState.positionType = 'long';
-                        tradingState.entryPrice = price;
+                        tradingState.position = {
+                            type: 'long',
+                            entryPrice: price,
+                            entryTime: await getCurrentBarTime(),
+                            margin: margin,
+                            leverage: leverage,
+                            quantity: quantity,
+                            liquidationPrice: calculateLiquidationPrice(price, leverage, 'long')
+                        };
                         
                         // 更新UI
                         updatePositionInfo('多', price);
                         toggleTradingButtons(true);
-                        
-                        // 保存当前时间 - 现在也是异步的
-                        tradingState.entryTime = await getCurrentBarTime();
-                        
-                        // 添加买入标记
+                        drawLiquidationLine(tradingState.position.liquidationPrice);
                         addBuyMarker(price);
                         
                         // 更新状态显示
                         updateReplayStatus();
-                        
-                        // 启动状态更新定时器
                         startStatusUpdateTimer();
                         
                         // 触发自定义事件
@@ -1497,27 +1594,50 @@
             // 卖出按钮事件
             if (sellButton) {
                 sellButton.addEventListener('click', async function() {
+                    if (tradingState.inPosition) return;
+
                     try {
-                        // 获取当前价格 - 现在是异步的
-                        var price = await getCurrentPrice();
+                        const margin = parseFloat(investAmountInput.value);
+                        const leverage = parseInt(leverageSelector.value);
+                        const price = await getCurrentPrice();
+
+                        if (isNaN(margin) || margin <= 0) {
+                            alert('请输入有效的投入金额');
+                            return;
+                        }
+                        if (margin > tradingState.accountBalance) {
+                            alert('投入金额不能超过账户余额');
+                            return;
+                        }
+
+                        // 更新账户余额
+                        tradingState.accountBalance -= margin;
+                        await updateAccountBalanceUI();
+
+                        // 计算仓位
+                        const positionValue = margin * leverage;
+                        const quantity = positionValue / price;
+
+                        // 更新持仓状态
                         tradingState.inPosition = true;
-                        tradingState.positionType = 'short';
-                        tradingState.entryPrice = price;
-                        
+                        tradingState.position = {
+                            type: 'short',
+                            entryPrice: price,
+                            entryTime: await getCurrentBarTime(),
+                            margin: margin,
+                            leverage: leverage,
+                            quantity: quantity,
+                            liquidationPrice: calculateLiquidationPrice(price, leverage, 'short')
+                        };
+
                         // 更新UI
                         updatePositionInfo('空', price);
                         toggleTradingButtons(true);
-                        
-                        // 保存当前时间 - 现在是异步的
-                        tradingState.entryTime = await getCurrentBarTime();
-                        
-                        // 添加卖出标记
+                        drawLiquidationLine(tradingState.position.liquidationPrice);
                         addSellMarker(price);
                         
                         // 更新状态显示
                         updateReplayStatus();
-                        
-                        // 启动状态更新定时器
                         startStatusUpdateTimer();
                         
                         // 触发自定义事件
@@ -1534,83 +1654,49 @@
             // 平仓按钮事件
             if (closePositionButton) {
                 closePositionButton.addEventListener('click', async function() {
+                    if (!tradingState.inPosition) return;
+
+                    // 如果在播放，先停止
+                    if (isPlaying) {
+                        stopPlayback();
+                    }
+
                     try {
-                        // 获取当前价格 - 现在是异步的
-                        var price = await getCurrentPrice();
-                        var pnl = calculatePnL(tradingState.positionType, tradingState.entryPrice, price);
-                        var posType = tradingState.positionType; // 保存当前仓位类型用于绘制标记
-                        var entryPrice = tradingState.entryPrice; // 保存入场价格用于绘制标记
-                        
-                        // 获取当前图表信息
-                        const chart = window.widget.chart();
-                        const symbol_interval = window.widget.symbolInterval();
-                        const symbol = symbol_interval.symbol;
-                        const interval = symbol_interval.interval;
-                        const currentTime = await getCurrentBarTime();
-                        
-                        // 判断是否是首次平仓（没有会话ID）
-                        const isFirstTrade = !tradingState.replaySessionId;
-                        
+                        const price = await getCurrentPrice();
+                        const pnl = calculatePnL(
+                            tradingState.position.type,
+                            tradingState.position.entryPrice,
+                            price,
+                            tradingState.position.quantity
+                        );
+
+                        // 更新账户余额
+                        tradingState.accountBalance += tradingState.position.margin + pnl;
+                        await updateAccountBalanceUI();
+
                         // 保存交易记录
-                        const tradeData = {
-                            symbol: symbol,
-                            position_type: posType,
-                            entry_time: tradingState.entryTime,
-                            exit_time: currentTime,
-                            entry_price: entryPrice,
-                            exit_price: price,
-                            interval: interval,
-                            pnl: pnl,
-                            timestamp: Math.floor(Date.now() / 1000),
-                            is_first_trade: isFirstTrade,
-                            replay_session_id: tradingState.replaySessionId,
-                            replay_start_time: tradingState.replayStartTime,
-                            bars_count: tradingState.barsCount,
-                            client_id: 'default_client', // 可以从用户配置中获取
-                            user_id: 'default_user'      // 可以从用户配置中获取
-                        };
-                        
-                        // 发送交易记录到服务器
-                        fetch('/save-trade', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                            },
-                            body: JSON.stringify(tradeData)
-                        }).then(response => response.json())
-                        .then(data => {
-                            if (data.status === 'ok') {
-                                console.log('交易记录保存成功');
-                                
-                                // 如果是首次交易，保存返回的会话ID
-                                if (isFirstTrade && data.data && data.data.session_uuid) {
-                                    tradingState.replaySessionId = data.data.session_uuid;
-                                    console.log('新回放会话已创建，ID:', tradingState.replaySessionId);
-                                }
-                            } else {
-                                console.error('交易记录保存失败:', data.message);
-                            }
-                        }).catch(error => {
-                            console.error('保存交易记录时出错:', error);
-                        });
-                        
+                        await saveTradeRecord(price, pnl, 'closed', tradingState.position);
+
+                        // 在清除状态前绘制平仓标记
+                        await addClosePositionMarker(
+                            tradingState.position.type,
+                            tradingState.position.entryPrice,
+                            price
+                        );
+
+                        // 重置持仓状态
                         tradingState.inPosition = false;
-                        tradingState.positionType = null;
-                        tradingState.entryPrice = 0;
-                        
+                        tradingState.position = {};
+
                         // 更新UI
                         clearPositionInfo();
                         toggleTradingButtons(false);
-                        
+                        removeLiquidationLine();
+
                         // 更新状态显示
                         updateReplayStatus();
-                        
-                        // 停止状态更新定时器
                         stopStatusUpdateTimer();
                         
-                        // 添加平仓区域标记 - 现在是异步函数
-                        await addClosePositionMarker(posType, entryPrice, price);
-                    
                         // 触发自定义事件
                         var event = new CustomEvent('position-closed', {
                             detail: { pnl: pnl, exitPrice: price }
@@ -1658,15 +1744,103 @@
                 return Math.round(Math.random() * 10000) / 100;
             }
             
-            function calculatePnL(positionType, entryPrice, currentPrice) {
+            function calculatePnL(positionType, entryPrice, currentPrice, quantity) {
                 if (positionType === 'long') {
-                    return currentPrice - entryPrice;
+                    return (currentPrice - entryPrice) * quantity;
                 } else if (positionType === 'short') {
-                    return entryPrice - currentPrice;
+                    return (entryPrice - currentPrice) * quantity;
+                }
+                return 0;
+            }
+
+            // 计算强平价格
+            function calculateLiquidationPrice(entryPrice, leverage, positionType) {
+                if (leverage <= 0) return 0;
+                // 维持保证金率，参考主流交易所，高杠杆下通常为0.5%
+                const maintenanceMarginRate = 0.005; 
+            
+                if (positionType === 'long') {
+                    return entryPrice * (1 - (1 / leverage) + maintenanceMarginRate);
+                } else if (positionType === 'short') {
+                    return entryPrice * (1 + (1 / leverage) - maintenanceMarginRate);
                 }
                 return 0;
             }
             
+            // 绘制强平价格线
+            function drawLiquidationLine(price) {
+                if (!window.widget || price <= 0) return;
+                removeLiquidationLine(); // 先移除旧的
+            
+                try {
+                    tradingState.liquidationLine = window.widget.chart().createOrderLine()
+                        .price(price)
+                        .text(`强平价: ${price.toFixed(4)}`)
+                        .lineColor("#FF5252")
+                        .bodyBorderColor("#FF5252")
+                        .bodyBackgroundColor("rgba(255, 82, 82, 0.2)")
+                        .bodyTextColor("#FF5252")
+                        .lineStyle(2) // 虚线
+                        .lineWidth(1);
+                } catch (e) {
+                    console.error("绘制强平线失败:", e);
+                }
+            }
+            
+            // 移除强平价格线
+            function removeLiquidationLine() {
+                if (tradingState.liquidationLine) {
+                    try {
+                        tradingState.liquidationLine.remove();
+                    } catch (e) {
+                        console.warn("移除强平线失败:", e);
+                    }
+                    tradingState.liquidationLine = null;
+                }
+            }
+            async function updateAccountBalanceUI() {
+                if (accountBalanceValue) {
+                    let displayBalance = tradingState.accountBalance;
+                    let pnl = 0;
+                    const inPosition = tradingState.inPosition && tradingState.position.type;
+
+                    if (inPosition) {
+                        try {
+                            const currentPrice = await getCurrentPrice();
+                            pnl = calculatePnL(
+                                tradingState.position.type,
+                                tradingState.position.entryPrice,
+                                currentPrice,
+                                tradingState.position.quantity
+                            );
+                            // 总权益 = 可用余额 + 仓位保证金 + 未实现盈亏
+                            displayBalance = tradingState.accountBalance + tradingState.position.margin + pnl;
+                        } catch (e) {
+                            console.error("无法计算实时权益:", e);
+                            // 异常时回退显示可用余额
+                            displayBalance = tradingState.accountBalance;
+                        }
+                    }
+                    
+                    accountBalanceValue.textContent = displayBalance.toFixed(2);
+                    
+                    // 仅当有持仓时，根据未实现盈亏更新颜色
+                    if (inPosition) {
+                        if (pnl > 0) {
+                            accountBalanceValue.classList.add('positive');
+                            accountBalanceValue.classList.remove('negative');
+                        } else if (pnl < 0) {
+                            accountBalanceValue.classList.add('negative');
+                            accountBalanceValue.classList.remove('positive');
+                        } else {
+                            accountBalanceValue.classList.remove('positive', 'negative');
+                        }
+                    } else {
+                        // 没有持仓时，移除颜色
+                        accountBalanceValue.classList.remove('positive', 'negative');
+                    }
+                }
+            }
             function updatePositionInfo(typeText, price) {
                 if (positionType && positionPrice) {
                     positionType.textContent = typeText;
@@ -1674,14 +1848,14 @@
                     positionType.style.color = typeText === '多' ? '#26a69a' : '#ef5350';
                 }
             }
-            
+ 
             function clearPositionInfo() {
                 if (positionType && positionPrice) {
                     positionType.textContent = '';
                     positionPrice.textContent = '';
                 }
             }
-            
+ 
             function toggleTradingButtons(inPosition) {
                 if (buyButton && sellButton && closePositionButton) {
                     buyButton.disabled = inPosition;
@@ -1689,28 +1863,28 @@
                     closePositionButton.disabled = !inPosition;
                 }
             }
-            
+ 
             function showPnLResult(pnl) {
                 var color = pnl >= 0 ? '#26a69a' : '#ef5350';
                 var sign = pnl >= 0 ? '+' : '';
                 alert('交易结果: ' + sign + pnl.toFixed(2));
             }
-            
+ 
             // 图表标记相关函数
-            
+ 
             // 添加买入标记（上箭头）
             async function addBuyMarker(price) {
                 if (!window.widget) return;
-                
+ 
                 try {
                     const chart = window.widget.chart();
                     const currentTime = await getCurrentBarTime();
-                    
+ 
                     // 记录入场时间
                     tradingState.entryTime = currentTime;
-                    
+ 
                     // 创建买入标记（向上箭头，绿色）
-                    //const markerId = chart.createShape({ 
+                    //const markerId = chart.createShape({
                     //    time: currentTime,
                     //    price: price,
                     //    shape: 'arrow_up',
@@ -1727,33 +1901,33 @@
                     //        size: 2
                     //    }
                     //});
-
+ 
                     const markerId = chart.createShape(
                         { time: currentTime, channel: "low" },
                         { shape: "arrow_up", text: "Buy" }
                     );
                     // 保存标记ID
                     tradingState.markers.push(markerId);
-                    
+ 
                     console.log('添加买入标记成功，ID:', markerId, '价格:', price, '时间:', new Date(currentTime * 1000).toLocaleString());
                 } catch (e) {
                     console.error('添加买入标记失败:', e);
                 }
             }
-            
+ 
             // 添加卖出标记（下箭头）
             async function addSellMarker(price) {
                 if (!window.widget) return;
-                
+ 
                 try {
                     const chart = window.widget.chart();
                     const currentTime = await getCurrentBarTime();
-                    
+ 
                     // 记录入场时间
                     tradingState.entryTime = currentTime;
-                    
+ 
                     // 创建卖出标记（向下箭头，红色）
-                    //const markerId = chart.createShape({ 
+                    //const markerId = chart.createShape({
                     //    time: currentTime,
                     //    price: price,
                     //    shape: 'arrow_down',
@@ -1770,34 +1944,34 @@
                     //        size: 2
                     //    }
                     //});
-                    
+ 
                     const markerId = chart.createShape(
                         { time: currentTime, channel: "high" },
                         { shape: "arrow_down", text: "Sell" }
                     );
                     // 保存标记ID
                     tradingState.markers.push(markerId);
-                    
+ 
                     console.log('添加卖出标记成功，ID:', markerId, '价格:', price, '时间:', new Date(currentTime * 1000).toLocaleString());
                 } catch (e) {
                     console.error('添加卖出标记失败:', e);
                 }
             }
-            
+ 
             // 添加平仓区域标记
             async function addClosePositionMarker(positionType, entryPrice, exitPrice) {
-                if (!window.widget || !tradingState.entryTime) return;
-                
+                if (!window.widget || !tradingState.position.entryTime) return;
+ 
                 try {
                     const chart = window.widget.chart();
                     // 获取当前K线时间（现在返回 Promise）
                     const currentTime = await getCurrentBarTime();
-                    
+ 
                     // 确定颜色（根据盈亏状态使用不同深浅的颜色）
                     let color;
                     // 判断是否盈利
                     const isProfitable = positionType === 'long' ? exitPrice > entryPrice : exitPrice < entryPrice;
-                    
+ 
                     // 根据仓位类型和盈亏状态确定颜色
                     if (positionType === 'long') {
                         // 多单：盈利用较浅绿色，亏损用较深绿色
@@ -1806,13 +1980,13 @@
                         // 空单：盈利用较浅红色，亏损用较深红色
                         color = isProfitable ? '#F44336' : '#B71C1C';
                     }
-                    
+ 
                     const opacity = 0.2; // 透明度
                     const borderOpacity = 0.8; // 边框透明度
-                    
+ 
                     // 创建区域标记
                     const markerId = chart.createMultipointShape([
-                        { time: tradingState.entryTime, price: entryPrice },
+                        { time: tradingState.position.entryTime, price: entryPrice },
                         { time: currentTime, price: exitPrice }
                     ], {
                         shape: 'date_and_price_range',
@@ -1831,17 +2005,17 @@
                             extendRight: false
                         }
                     });
-                    
+ 
                     // 保存标记ID
                     tradingState.markers.push(markerId);
-                    
-                    console.log('添加平仓区域标记成功，ID:', markerId, '从时间:', new Date(tradingState.entryTime * 1000).toLocaleString(), 
-                               '到时间:', new Date(currentTime * 1000).toLocaleString());
+ 
+                    console.log('添加平仓区域标记成功，ID:', markerId, '从时间:', new Date(tradingState.position.entryTime * 1000).toLocaleString(),
+                                '到时间:', new Date(currentTime * 1000).toLocaleString());
                 } catch (e) {
                     console.error('添加平仓区域标记失败:', e);
                 }
             }
-            
+ 
             // 获取当前K线的时间 - 返回 Promise
             function getCurrentBarTime() {
                 if (!window.widget) {
@@ -1979,8 +2153,8 @@
                 loading: false,
                 hasMore: true,
                 total: 0,
-                client_id: 'default_client', // 可以从用户配置中获取
-                user_id: 'default_user'      // 可以从用户配置中获取
+                client_id: 'tv_proxy', // 可以从用户配置中获取
+                user_id: 'public_user'      // 可以从用户配置中获取
             };
             
             // 打开历史记录弹窗
@@ -2093,8 +2267,12 @@
                 const details = document.createElement('div');
                 details.className = 'history-item-details';
                 
-                // 添加详情项
-                addDetailItem(details, '价格变动', formatPriceChange(item.price_start, item.price_end, item.price_change_percent));
+                // 添加详情项 - 优先使用市场价格，如果不存在则使用交易价格
+                addDetailItem(details, '价格变动', formatPriceChange(
+                    item.market_price_start || item.price_start, 
+                    item.market_price_end || item.price_end, 
+                    item.market_price_change_percent || item.price_change_percent
+                ));
                 addDetailItem(details, '总盈亏', formatPnL(item.total_pnl));
                 addDetailItem(details, '交易次数', item.trade_count || 0);
                 addDetailItem(details, '持仓时长', formatHoldingTime(item.hold_time_length));
@@ -2187,7 +2365,10 @@
             }
             
             // 重放历史会话
-            function replayHistorySession(session) {
+            async function replayHistorySession(session) {
+                // 结束当前回放会话（如果有的话）
+                await finishCurrentReplaySession();
+                
                 // 关闭历史记录弹窗
                 historyModal.style.display = 'none';
                 
@@ -2402,13 +2583,13 @@
                 });
                 
                 // 监听交易对变化
-                chart.onSymbolChanged().subscribe(null, function(symbolInfo) {
+                chart.onSymbolChanged().subscribe(null, async function(symbolInfo) {
                     console.log('交易对已变更为:', symbolInfo.name);
                     
                     // 如果在回放中且有回放会话，则视为新的回放会话
                     if (menu.style.display !== 'none') {
-                        // 重置回放会话ID
-                        tradingState.replaySessionId = null;
+                        // 结束当前回放会话（如果有的话）
+                        await finishCurrentReplaySession();
                         
                         // 清空交易状态
                         if (tradingState.inPosition) {
@@ -2495,18 +2676,217 @@
                 if (currentPnlElement && currentPnlContainer && tradingState.inPosition) {
                     try {
                         const currentPrice = await getCurrentPrice();
-                        const pnl = calculatePnL(tradingState.positionType, tradingState.entryPrice, currentPrice);
-                        const pnlPercent = (pnl / tradingState.entryPrice) * 100;
+                        const pnl = calculatePnL(tradingState.position.type, tradingState.position.entryPrice, currentPrice, tradingState.position.quantity);
+                        const pnlPercent = (pnl / tradingState.position.margin) * 100;
                         
                         currentPnlElement.textContent = `${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)} (${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}%)`;
                         currentPnlElement.className = 'status-value ' + (pnl >= 0 ? 'positive' : 'negative');
                         currentPnlContainer.style.display = 'flex';
+
+                        // 强平检测
+                        if ( (tradingState.position.type === 'long' && currentPrice <= tradingState.position.liquidationPrice) ||
+                             (tradingState.position.type === 'short' && currentPrice >= tradingState.position.liquidationPrice) )
+                        {
+                            // 立即设置状态防止重入
+                            const positionToLiquidate = tradingState.position;
+                            tradingState.inPosition = false;
+
+                            if (isPlaying) {
+                                stopPlayback();
+                            }
+                            alert('仓位已被强制平仓！');
+                            
+                            // 在清除状态前绘制平仓标记
+                            await addClosePositionMarker(
+                                positionToLiquidate.type,
+                                positionToLiquidate.entryPrice,
+                                currentPrice
+                            );
+                            
+                            // 保证金全部损失，不需要更新余额
+                            await saveTradeRecord(currentPrice, -positionToLiquidate.margin, 'liquidated', positionToLiquidate);
+                            
+                            // 重置状态
+                            tradingState.position = {};
+                            clearPositionInfo();
+                            toggleTradingButtons(false);
+                            removeLiquidationLine();
+                            stopStatusUpdateTimer();
+                        }
+
                     } catch (e) {
                         console.error('更新盈亏显示失败:', e);
                         currentPnlContainer.style.display = 'none';
                     }
                 } else if (currentPnlContainer) {
                     currentPnlContainer.style.display = 'none';
+                }
+
+                // 更新账户余额UI
+                await updateAccountBalanceUI();
+            }
+
+            async function saveTradeRecord(exitPrice, pnl, status, position) {
+                const chart = window.widget.chart();
+                const symbol_interval = window.widget.symbolInterval();
+                const symbol = symbol_interval.symbol;
+                const interval = symbol_interval.interval;
+                const currentTime = await getCurrentBarTime();
+
+                const isFirstTrade = !tradingState.replaySessionId;
+
+                const tradeData = {
+                    symbol: symbol,
+                    position_type: position.type,
+                    entry_time: position.entryTime,
+                    exit_time: currentTime,
+                    entry_price: position.entryPrice,
+                    exit_price: exitPrice,
+                    quantity: position.quantity,
+                    leverage: position.leverage,
+                    margin: position.margin,
+                    pnl: pnl,
+                    status: status,
+                    timestamp: Math.floor(Date.now() / 1000),
+                    is_first_trade: isFirstTrade,
+                    replay_session_id: tradingState.replaySessionId,
+                    replay_start_time: tradingState.replayStartTime,
+                    bars_count: tradingState.barsCount,
+                    client_id: 'tv_proxy',
+                    user_id: 'public_user'
+                };
+
+                try {
+                    const response = await fetch('/save-trade', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(tradeData)
+                    });
+                    const data = await response.json();
+                    if (data.status === 'ok') {
+                        console.log('交易记录保存成功');
+                        if (isFirstTrade && data.data && data.data.session_uuid) {
+                            tradingState.replaySessionId = data.data.session_uuid;
+                            console.log('新回放会话已创建，ID:', tradingState.replaySessionId);
+                        }
+                    } else {
+                        console.error('交易记录保存失败:', data.message);
+                    }
+                } catch (error) {
+                    console.error('保存交易记录时出错:', error);
+                }
+            }
+
+            // 记录市场价格的函数
+            async function recordMarketPrice(priceType) {
+                if (!tradingState.replaySessionId) {
+                    // 如果还没有回放会话ID，需要先创建会话
+                    await createReplaySession();
+                }
+
+                if (!tradingState.replaySessionId) {
+                    console.error('无法记录市场价格：缺少回放会话ID');
+                    return;
+                }
+
+                try {
+                    const currentPrice = await getCurrentPrice();
+                    if (!currentPrice) {
+                        console.error('无法获取当前市场价格');
+                        return;
+                    }
+
+                    const response = await fetch(`/api/replay/sessions/${tradingState.replaySessionId}/market-price`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            price: currentPrice,
+                            price_type: priceType
+                        })
+                    });
+
+                    const data = await response.json();
+                    if (data.status === 'ok') {
+                        console.log(`市场${priceType === 'start' ? '起始' : '结束'}价格记录成功:`, currentPrice);
+                    } else {
+                        console.error('记录市场价格失败:', data.message);
+                    }
+                } catch (error) {
+                    console.error('记录市场价格时出错:', error);
+                }
+            }
+
+            // 结束当前回放会话的函数
+            async function finishCurrentReplaySession() {
+                if (!tradingState.replaySessionId) {
+                    return; // 没有活跃的会话
+                }
+
+                console.log('结束当前回放会话:', tradingState.replaySessionId);
+                
+                try {
+                    // 记录市场结束价格和结束时间
+                    await recordMarketPrice('end');
+                    
+                    // 更新会话的结束时间
+                    const response = await fetch(`/api/replay/sessions/${tradingState.replaySessionId}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            end_time: Math.floor(Date.now() / 1000)
+                        })
+                    });
+
+                    const data = await response.json();
+                    if (data.status === 'ok') {
+                        console.log('回放会话结束时间更新成功');
+                    } else {
+                        console.error('更新回放会话结束时间失败:', data.message);
+                    }
+                } catch (error) {
+                    console.error('结束回放会话时出错:', error);
+                }
+
+                // 清除当前会话ID，为新会话做准备
+                tradingState.replaySessionId = null;
+            }
+
+            // 创建回放会话的函数
+            async function createReplaySession() {
+                if (tradingState.replaySessionId) {
+                    return; // 已经有会话ID了
+                }
+
+                try {
+                    const chart = window.widget.chart();
+                    const symbol_interval = window.widget.symbolInterval();
+                    const symbol = symbol_interval.symbol;
+                    const interval = symbol_interval.interval;
+
+                    const sessionData = {
+                        symbol: symbol,
+                        interval: interval,
+                        start_time: tradingState.replayStartTime,
+                        bars_count: tradingState.barsCount,
+                        client_id: 'tv_proxy',
+                        user_id: 'public_user'
+                    };
+
+                    const response = await fetch('/api/replay/sessions', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(sessionData)
+                    });
+
+                    const data = await response.json();
+                    if (data.status === 'ok' && data.data && data.data.session_uuid) {
+                        tradingState.replaySessionId = data.data.session_uuid;
+                        console.log('回放会话创建成功，ID:', tradingState.replaySessionId);
+                    } else {
+                        console.error('创建回放会话失败:', data.message);
+                    }
+                } catch (error) {
+                    console.error('创建回放会话时出错:', error);
                 }
             }
         })();

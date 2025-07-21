@@ -90,7 +90,7 @@ class TradingViewWSProxy:
             socketio.emit('tv_message', {'message': message}, room=self.client_sid)
         
         def on_error(ws, error):
-            logger.error(f"Error in TradingView WebSocket connection: {error}")
+            logger.exception(f"Error in TradingView WebSocket connection: {error}")
             socketio.emit('tv_error', {'error': str(error)}, room=self.client_sid)
         
         def on_close(ws, close_status_code, close_msg):
@@ -126,7 +126,7 @@ class TradingViewWSProxy:
             self.ws.send(message)
             return True
         else:
-            logger.error("Cannot send message, WebSocket not connected")
+            logger.exception("Cannot send message, WebSocket not connected")
             return False
     
     def disconnect(self):
@@ -136,8 +136,15 @@ class TradingViewWSProxy:
             self.ws = None
             self.connected = False
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging with detailed format
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(funcName)s() - %(message)s',
+    handlers=[
+        logging.FileHandler('app.log'),
+        logging.StreamHandler()
+    ]
+)
 logger = logging.getLogger(__name__)
 
 # Base URLs for TradingView resources
@@ -233,7 +240,10 @@ def init_db():
         updated_at BIGINT NOT NULL,
         price_start DOUBLE PRECISION,
         price_end DOUBLE PRECISION,
-        price_change_percent DOUBLE PRECISION
+        price_change_percent DOUBLE PRECISION,
+        market_price_start DOUBLE PRECISION,
+        market_price_end DOUBLE PRECISION,
+        market_price_change_percent DOUBLE PRECISION
     )
     ''')
 
@@ -241,16 +251,22 @@ def init_db():
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS trades (
         id SERIAL PRIMARY KEY,
+        replay_session_id TEXT,
         symbol TEXT NOT NULL,
-        position_type TEXT NOT NULL,
+        position_type TEXT NOT NULL, -- 'long' or 'short'
+        status TEXT NOT NULL DEFAULT 'closed', -- 'closed' 或 'liquidated'
+        
         entry_time BIGINT NOT NULL,
         exit_time BIGINT NOT NULL,
         entry_price DOUBLE PRECISION NOT NULL,
         exit_price DOUBLE PRECISION NOT NULL,
-        interval TEXT NOT NULL,
-        pnl DOUBLE PRECISION NOT NULL,
-        timestamp BIGINT NOT NULL,
-        replay_session_id TEXT
+        
+        quantity DOUBLE PRECISION NOT NULL, -- 开仓的币数量
+        leverage INTEGER NOT NULL,          -- 使用的杠杆倍数
+        margin DOUBLE PRECISION NOT NULL,   -- 投入的保证金
+        
+        pnl DOUBLE PRECISION NOT NULL,      -- 最终盈亏
+        timestamp BIGINT NOT NULL
     )
     ''')
     
@@ -282,7 +298,7 @@ def proxy_tradingview_resource(domain, resource_path):
     
     # Check if this is a valid domain we can proxy
     if domain not in DOMAIN_MAPPINGS:
-        logger.error(f"Unknown domain: {domain}")
+        logger.exception(f"Unknown domain: {domain}")
         return f"Unknown domain: {domain}", 400
     
     # Generate the cache path for storing the resource
@@ -325,11 +341,11 @@ def proxy_tradingview_resource(domain, resource_path):
             # Serve the downloaded resource
             return send_from_directory(os.path.dirname(local_path), os.path.basename(local_path))
         else:
-            logger.error(f"Failed to download resource {cache_path}: Status {response.status_code}")
+            logger.exception(f"Failed to download resource {cache_path}: Status {response.status_code}")
             return f"Failed to download resource: {response.status_code}", response.status_code
     
     except Exception as e:
-        logger.error(f"Error downloading resource {cache_path}: {str(e)}")
+        logger.exception(f"Error downloading resource {cache_path}")
         return f"Error downloading resource: {str(e)}", 500
 
 @app.route('/charting_library/<path:resource_path>')
@@ -493,7 +509,7 @@ def delete_chart():
             'status': 'ok'
         })
     except Exception as e:
-        logger.error(f"Error deleting chart {chart_id}: {str(e)}")
+        logger.exception(f"Error deleting chart {chart_id}")
         return jsonify({
             'status': 'error',
             'message': f'Error deleting chart: {str(e)}'
@@ -668,7 +684,7 @@ def delete_study_template():
             'status': 'ok'
         })
     except Exception as e:
-        logger.error(f"Error deleting study template {template_name}: {str(e)}")
+        logger.exception(f"Error deleting study template {template_name}: {str(e)}")
         return jsonify({
             'status': 'error',
             'message': f'Error deleting study template: {str(e)}'
@@ -929,8 +945,11 @@ def save_trade():
             })
         
         # 验证必要字段
-        required_fields = ['symbol', 'position_type', 'entry_time', 'exit_time', 
-                         'entry_price', 'exit_price', 'interval', 'pnl', 'timestamp']
+        required_fields = [
+            'symbol', 'position_type', 'entry_time', 'exit_time',
+            'entry_price', 'exit_price', 'pnl', 'timestamp',
+            'quantity', 'leverage', 'margin'
+        ]
         for field in required_fields:
             if field not in data:
                 return jsonify({
@@ -947,61 +966,78 @@ def save_trade():
         
         # 如果没有会话ID，并且这是首次交易，则创建新的回放会话
         if not replay_session_id or data.get('is_first_trade', False):
-            # 生成会话UUID
             session_uuid = str(uuid.uuid4())
             current_time = int(time.time())
-            
-            # 获取K线数量，如果未提供则使用默认值
             bars_count = data.get('bars_count', 150)
-            try:
-                bars_count = int(bars_count)
-            except:
-                bars_count = 150
-                
-            # 获取客户端ID和用户ID，如果未提供则使用默认值
             client_id = data.get('client_id', 'default_client')
             user_id = data.get('user_id', 'default_user')
             
-            # 插入回放会话记录
             cursor.execute('''
             INSERT INTO replay_sessions (
-                session_uuid, client_id, user_id, symbol, interval, 
+                session_uuid, client_id, user_id, symbol, interval,
                 start_time, bars_count, created_at, updated_at
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             ''', (
-                session_uuid,
-                client_id,
-                user_id,
+                session_uuid, client_id, user_id,
                 data['symbol'],
-                data['interval'],
-                data.get('entry_time'),  # 使用回放开始时间或入场时间
-                bars_count,
-                current_time,
-                current_time
+                data.get('interval', '1D'), # 从新数据中获取或使用默认值
+                data.get('entry_time'),
+                bars_count, current_time, current_time
             ))
             
-            # 使用新创建的会话ID
             replay_session_id = session_uuid
             response_data['session_uuid'] = session_uuid
         
         # 插入交易记录
         cursor.execute('''
         INSERT INTO trades (
-            symbol, position_type, entry_time, exit_time,
-            entry_price, exit_price, interval, pnl, timestamp, replay_session_id
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            replay_session_id, symbol, position_type, status,
+            entry_time, exit_time, entry_price, exit_price,
+            quantity, leverage, margin,
+            pnl, timestamp
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ''', (
+            replay_session_id,
             data['symbol'],
             data['position_type'],
+            data.get('status', 'closed'), # 'closed' 或 'liquidated'
             data['entry_time'],
             data['exit_time'],
             data['entry_price'],
             data['exit_price'],
-            data['interval'],
+            data['quantity'],
+            data['leverage'],
+            data['margin'],
             data['pnl'],
-            data['timestamp'],
-            replay_session_id
+            data['timestamp']
         ))
+        
+        # 更新会话的价格信息
+        # 如果是首次交易，设置起始价格为入场价格
+        if data.get('is_first_trade', False):
+            entry_price = data['entry_price']
+            cursor.execute('''
+            UPDATE replay_sessions
+            SET price_start = %s
+            WHERE session_uuid = %s
+            ''', (entry_price, replay_session_id))
+        
+        # 每次交易都更新结束价格和价格变化百分比
+        exit_price = data['exit_price']
+        cursor.execute('''
+        SELECT price_start FROM replay_sessions WHERE session_uuid = %s
+        ''', (replay_session_id,))
+        session_row = cursor.fetchone()
+        
+        if session_row and session_row['price_start']:
+            price_start = session_row['price_start']
+            price_change_percent = ((exit_price - price_start) / price_start) * 100
+            
+            cursor.execute('''
+            UPDATE replay_sessions
+            SET price_end = %s, price_change_percent = %s
+            WHERE session_uuid = %s
+            ''', (exit_price, price_change_percent, replay_session_id))
         
         conn.commit()
         conn.close()
@@ -1013,7 +1049,7 @@ def save_trade():
         })
         
     except Exception as e:
-        logger.error(f"Error saving trade record: {traceback.format_exc()}")
+        logger.exception(f"Error saving trade record: {traceback.format_exc()}")
         return jsonify({
             'status': 'error',
             'message': f'Error saving trade record: {str(e)}'
@@ -1026,7 +1062,7 @@ def trade_statistics():
         # 可选参数：symbol和interval用于过滤特定交易品种和时间周期
         symbol = request.args.get('symbol', '')
         interval = request.args.get('interval', '')
-        
+        logger.info(f"获取交易统计数据: symbol='{symbol}', interval='{interval}'")
         conn = get_db_connection()
         cursor = conn.cursor()
         
@@ -1034,12 +1070,18 @@ def trade_statistics():
         query_conditions = []
         query_params = []
         
+        # Base query with JOIN
+        base_query_from = '''
+        FROM trades t
+        JOIN replay_sessions s ON t.replay_session_id = s.session_uuid
+        '''
+
         if symbol:
-            query_conditions.append("symbol = %s")
+            query_conditions.append("t.symbol = %s")
             query_params.append(symbol)
         
         if interval:
-            query_conditions.append("interval = %s")
+            query_conditions.append("s.interval = %s")
             query_params.append(interval)
         
         # 组合查询条件
@@ -1049,11 +1091,11 @@ def trade_statistics():
         
         # 执行统计查询
         cursor.execute(f'''
-        SELECT 
+        SELECT
             COUNT(*) as total_trades,
-            SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as profitable_trades,
-            SUM(pnl) as total_pnl
-        FROM trades
+            SUM(CASE WHEN t.pnl > 0 THEN 1 ELSE 0 END) as profitable_trades,
+            SUM(t.pnl) as total_pnl
+        {base_query_from}
         {where_clause}
         ''', query_params)
         
@@ -1069,8 +1111,8 @@ def trade_statistics():
         
         # 获取所有交易记录以计算盈利率
         cursor.execute(f'''
-        SELECT position_type, entry_price, exit_price, pnl
-        FROM trades
+        SELECT t.position_type, t.entry_price, t.exit_price, t.pnl
+        {base_query_from}
         {where_clause}
         ''', query_params)
         
@@ -1099,7 +1141,7 @@ def trade_statistics():
         })
         
     except Exception as e:
-        logger.error(f"Error getting trade statistics: {str(e)}")
+        logger.exception(f"Error getting trade statistics: {str(e)}")
         return jsonify({
             'status': 'error',
             'message': f'Error getting trade statistics: {str(e)}'
@@ -1153,7 +1195,7 @@ def get_random_replay_point():
             }
         })
     except Exception as e:
-        logger.error(f"Error generating random replay point: {str(e)}")
+        logger.exception(f"Error generating random replay point: {str(e)}")
         return jsonify({
             'status': 'error',
             'message': f'Error generating random replay point: {str(e)}'
@@ -1227,7 +1269,7 @@ def create_replay_session():
         })
         
     except Exception as e:
-        logger.error(f"Error creating replay session: {str(e)}")
+        logger.exception(f"Error creating replay session: {str(e)}")
         return jsonify({
             'status': 'error',
             'message': f'Error creating replay session: {str(e)}'
@@ -1258,7 +1300,7 @@ def get_replay_session(session_uuid):
         # 查询该会话下的交易记录
         cursor.execute('''
         SELECT id, symbol, position_type, entry_time, exit_time,
-               entry_price, exit_price, interval, pnl, timestamp
+               entry_price, exit_price, pnl, timestamp
         FROM trades
         WHERE replay_session_id = %s
         ORDER BY timestamp ASC
@@ -1281,7 +1323,7 @@ def get_replay_session(session_uuid):
         })
         
     except Exception as e:
-        logger.error(f"Error getting replay session: {str(e)}")
+        logger.exception(f"Error getting replay session: {str(e)}")
         return jsonify({
             'status': 'error',
             'message': f'Error getting replay session: {str(e)}'
@@ -1354,10 +1396,94 @@ def update_replay_session(session_uuid):
         })
         
     except Exception as e:
-        logger.error(f"Error updating replay session: {str(e)}")
+        logger.exception(f"Error updating replay session: {str(e)}")
         return jsonify({
             'status': 'error',
             'message': f'Error updating replay session: {str(e)}'
+        }), 500
+
+@app.route('/api/replay/sessions/<session_uuid>/market-price', methods=['POST'])
+def update_session_market_price(session_uuid):
+    """更新会话的市场价格信息"""
+    try:
+        data = request.json
+        if not data:
+            return jsonify({
+                'status': 'error',
+                'message': 'Missing price data'
+            })
+        
+        # 验证必要字段
+        required_fields = ['price', 'price_type']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({
+                    'status': 'error',
+                    'message': f'Missing required field: {field}'
+                })
+        
+        price = data['price']
+        price_type = data['price_type']  # 'start' or 'end'
+        
+        if price_type not in ['start', 'end']:
+            return jsonify({
+                'status': 'error',
+                'message': 'price_type must be "start" or "end"'
+            })
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        if price_type == 'start':
+            # 更新开始价格
+            cursor.execute('''
+            UPDATE replay_sessions 
+            SET market_price_start = %s, updated_at = %s
+            WHERE session_uuid = %s
+            ''', (price, int(time.time()), session_uuid))
+        else:
+            # 更新结束价格，同时计算价格变化百分比
+            cursor.execute('''
+            SELECT market_price_start FROM replay_sessions WHERE session_uuid = %s
+            ''', (session_uuid,))
+            session_row = cursor.fetchone()
+            
+            if session_row and session_row['market_price_start']:
+                market_price_start = session_row['market_price_start']
+                market_price_change_percent = ((price - market_price_start) / market_price_start) * 100
+                
+                cursor.execute('''
+                UPDATE replay_sessions 
+                SET market_price_end = %s, market_price_change_percent = %s, updated_at = %s
+                WHERE session_uuid = %s
+                ''', (price, market_price_change_percent, int(time.time()), session_uuid))
+            else:
+                cursor.execute('''
+                UPDATE replay_sessions 
+                SET market_price_end = %s, updated_at = %s
+                WHERE session_uuid = %s
+                ''', (price, int(time.time()), session_uuid))
+        
+        if cursor.rowcount == 0:
+            conn.close()
+            return jsonify({
+                'status': 'error',
+                'message': 'Replay session not found'
+            }), 404
+        
+        conn.commit()
+        conn.close()
+        
+        return jsonify({
+            'status': 'ok',
+            'message': 'Market price updated successfully'
+        })
+        
+    except Exception as e:
+        logger.exception(f"Error updating session market price: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': f'Error updating session market price: {str(e)}'
         }), 500
 
 @app.route('/api/replay/sessions', methods=['GET'])
@@ -1380,56 +1506,72 @@ def list_replay_sessions():
         where_clauses = []
         params = []
         if client_id:
-            where_clauses.append('client_id = %s')
+            where_clauses.append('rs.client_id = %s')
             params.append(client_id)
         if user_id:
-            where_clauses.append('user_id = %s')
+            where_clauses.append('rs.user_id = %s')
             params.append(user_id)
         where_sql = ('WHERE ' + ' AND '.join(where_clauses)) if where_clauses else ''
 
         # 查询总数
-        cursor.execute(f'SELECT COUNT(*) FROM replay_sessions {where_sql}', params)
+        cursor.execute(f'SELECT COUNT(*) FROM replay_sessions rs {where_sql}', params)
         total = cursor.fetchone()['count']
 
-        # 查询分页数据
+        # 使用LEFT JOIN一次性查询所有数据，避免循环查询
         cursor.execute(f'''
-            SELECT session_uuid, symbol, interval, start_time, end_time, bars_count,
-                   price_start, price_end, price_change_percent
-            FROM replay_sessions
+            SELECT 
+                rs.session_uuid, 
+                rs.symbol, 
+                rs.interval, 
+                rs.start_time, 
+                rs.end_time, 
+                rs.bars_count,
+                rs.price_start, 
+                rs.price_end, 
+                rs.price_change_percent,
+                rs.market_price_start,
+                rs.market_price_end,
+                rs.market_price_change_percent,
+                COALESCE(t.total_pnl, 0) as total_pnl,
+                COALESCE(t.trade_count, 0) as trade_count,
+                t.min_entry_time as hold_time_start,
+                t.max_exit_time as hold_time_end,
+                CASE 
+                    WHEN t.min_entry_time IS NOT NULL AND t.max_exit_time IS NOT NULL 
+                    THEN t.max_exit_time - t.min_entry_time 
+                    ELSE 0 
+                END as hold_time_length
+            FROM replay_sessions rs
+            LEFT JOIN (
+                SELECT 
+                    replay_session_id,
+                    SUM(pnl) as total_pnl,
+                    MIN(entry_time) as min_entry_time,
+                    MAX(exit_time) as max_exit_time,
+                    COUNT(*) as trade_count
+                FROM trades
+                GROUP BY replay_session_id
+            ) t ON rs.session_uuid = t.replay_session_id
             {where_sql}
-            ORDER BY created_at DESC
+            ORDER BY rs.created_at DESC
             LIMIT %s OFFSET %s
         ''', params + [page_size, offset])
+        
         sessions = cursor.fetchall()
-
-        # 查询每个session的盈亏和持仓K线数、时间段
-        for s in sessions:
-            session_id = s['session_uuid']
-            cursor.execute('''
-                SELECT SUM(pnl) as total_pnl, 
-                       MIN(entry_time) as min_entry_time, MAX(exit_time) as max_exit_time,
-                       COUNT(*) as trade_count
-                FROM trades WHERE replay_session_id = %s
-            ''', (session_id,))
-            trade_info = cursor.fetchone()
-            s['total_pnl'] = trade_info['total_pnl'] or 0
-            s['trade_count'] = trade_info['trade_count'] or 0
-            s['hold_time_start'] = trade_info['min_entry_time']
-            s['hold_time_end'] = trade_info['max_exit_time']
-            if s['hold_time_start'] and s['hold_time_end']:
-                s['hold_time_length'] = s['hold_time_end'] - s['hold_time_start']
-            else:
-                s['hold_time_length'] = 0
         conn.close()
+        
+        # 转换为字典列表
+        sessions_list = [dict(session) for session in sessions]
+        
         return jsonify({
             'status': 'ok',
-            'data': sessions,
+            'data': sessions_list,
             'total': total,
             'page': page,
             'page_size': page_size
         })
     except Exception as e:
-        logger.error(f"Error listing replay sessions: {str(e)}")
+        logger.exception(f"Error listing replay sessions: {str(e)}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 def interval_to_seconds(interval):
