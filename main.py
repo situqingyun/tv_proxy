@@ -172,8 +172,7 @@ def init_db():
     # 图表布局表
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS chart_layouts (
-        id SERIAL PRIMARY KEY,
-        chart_id TEXT NOT NULL,
+        id TEXT PRIMARY KEY,
         client_id TEXT NOT NULL,
         user_id TEXT NOT NULL,
         name TEXT NOT NULL,
@@ -389,15 +388,15 @@ def get_all_users_charts(client_id, user_id):
     WHERE client_id = %s AND user_id = %s
     ORDER BY timestamp DESC
     ''', (client_id, user_id))
-    response_data = cursor.fetchall()  # 已经是 dict
+    charts = cursor.fetchall()
     conn.close()
-    return jsonify({'status': 'ok', 'data': response_data})
+    return jsonify({'status': 'ok', 'data': charts})
 
 def get_chart_content(client_id, user_id, chart_id):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
-    SELECT id, name, content, timestamp
+    SELECT id, name, content, timestamp, symbol, resolution
     FROM chart_layouts
     WHERE client_id = %s AND user_id = %s AND id = %s
     ''', (client_id, user_id, chart_id))
@@ -408,7 +407,9 @@ def get_chart_content(client_id, user_id, chart_id):
             'id': row['id'],
             'timestamp': row['timestamp'],
             'name': row['name'],
-            'content': row['content']
+            'content': row['content'],
+            'symbol': row['symbol'],
+            'resolution': row['resolution']
         }})
     else:
         return jsonify({'status': 'error', 'message': 'Chart not found'}), 404
@@ -437,48 +438,45 @@ def save_chart():
     """Save a chart layout"""
     client_id = request.args.get('client')
     user_id = request.args.get('user')
+    chart_id = request.args.get('chart')
+
     if not client_id or not user_id:
-        return jsonify({
-            'status': 'error',
-            'message': 'Missing client_id or user_id'
-        })
-    data = parse_request_data()
-    if not data:
-        return jsonify({
-            'status': 'error',
-            'message': 'Missing or invalid chart data'
-        })
-    name = data.get('name')
-    symbol = data.get('symbol')
-    resolution = data.get('resolution')
-    content = data.get('content')
+        return jsonify({'status': 'error', 'message': 'Missing client_id or user_id'}), 400
+
+    name = request.form.get('name')
+    content = request.form.get('content')
+    symbol = request.form.get('symbol')
+    resolution = request.form.get('resolution')
+    
+    if not content:
+        return jsonify({'status': 'error', 'message': 'Missing content'}), 400
+
     timestamp = int(datetime.now().timestamp())
-    chart_id = data.get('chart', '')
     conn = get_db_connection()
     cursor = conn.cursor()
+
     if chart_id:
         cursor.execute('''
-        SELECT id FROM chart_layouts WHERE chart_id = %s AND client_id = %s AND user_id = %s
-        ''', (chart_id, client_id, user_id))
-        row = cursor.fetchone()
-        if row:
-            cursor.execute('''
-            UPDATE chart_layouts
-            SET name = %s, symbol = %s, resolution = %s, content = %s, timestamp = %s
-            WHERE chart_id = %s AND client_id = %s AND user_id = %s
-            ''', (name, symbol, resolution, content, timestamp, chart_id, client_id, user_id))
+        UPDATE chart_layouts
+        SET name = %s, symbol = %s, resolution = %s, content = %s, timestamp = %s
+        WHERE id = %s AND client_id = %s AND user_id = %s
+        ''', (name, symbol, resolution, content, timestamp, chart_id, client_id, user_id))
     else:
-        chart_id = str(uuid.uuid4())
+        try:
+            chart_data = json.loads(content)
+            new_chart_id = str(chart_data.get('id'))
+        except (json.JSONDecodeError, KeyError):
+            return jsonify({'status': 'error', 'message': 'Invalid content format'}), 400
+        
         cursor.execute('''
-        INSERT INTO chart_layouts (client_id, user_id, chart_id, name, symbol, resolution, content, timestamp)
+        INSERT INTO chart_layouts (id, client_id, user_id, name, symbol, resolution, content, timestamp)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-        ''', (client_id, user_id, chart_id, name, symbol, resolution, content, timestamp))
+        ''', (new_chart_id, client_id, user_id, name, symbol, resolution, content, timestamp))
+        chart_id = new_chart_id
+
     conn.commit()
     conn.close()
-    return jsonify({
-        'status': 'ok',
-        'id': chart_id
-    })
+    return jsonify({'status': 'ok', 'id': chart_id})
 
 @app.route('/saveload.tradingview.com/1.1/charts', methods=['DELETE'])
 def delete_chart():
@@ -501,7 +499,7 @@ def delete_chart():
         cursor = conn.cursor()
         cursor.execute('''
         DELETE FROM chart_layouts
-        WHERE chart_id = %s AND client_id = %s AND user_id = %s
+        WHERE id = %s AND client_id = %s AND user_id = %s
         ''', (chart_id, client_id, user_id))
         conn.commit()
         conn.close()
@@ -521,21 +519,13 @@ def get_all_tamplates_list(client_id, user_id):
     cursor = conn.cursor()
     
     cursor.execute('''
-    SELECT name
+    SELECT name, content
     FROM study_templates
     WHERE client_id = %s AND user_id = %s
     ORDER BY timestamp DESC
     ''', (client_id, user_id))
     
-    templates = []
-    for row in cursor.fetchall():
-        templates.append({
-            # 'id': row['template_id'],
-            'name': row['name'],
-            # 'content': row['content'],
-            # 'timestamp': row['timestamp']
-        })
-    
+    templates = cursor.fetchall()
     conn.close()
     
     return jsonify({
@@ -602,17 +592,10 @@ def save_study_template():
             'message': 'Missing client_id or user_id'
         })
     
-    data = request.json
-    if not data:
-        return jsonify({
-            'status': 'error',
-            'message': 'Missing template data'
-        })
-    
-    template_name = data.get('name')
-    content = data.get('content')
+    # TradingView uses multipart/form-data for POST requests
+    template_name = request.form.get('name')
+    content = request.form.get('content')
     timestamp = int(datetime.now().timestamp())
-    # template_id = data.get('id') or str(uuid.uuid4())
     
     if not template_name or not content:
         return jsonify({
@@ -631,23 +614,21 @@ def save_study_template():
     if row:
         cursor.execute('''
         UPDATE study_templates
-        SET name = %s, content = %s, timestamp = %s
+        SET content = %s, timestamp = %s
         WHERE name = %s AND client_id = %s AND user_id = %s
-        ''', (template_name, content, timestamp, template_name, client_id, user_id))
+        ''', (content, timestamp, template_name, client_id, user_id))
     else:
         cursor.execute('''
-        INSERT INTO study_templates (client_id, user_id, name, content, timestamp)
-        VALUES (%s, %s, %s, %s, %s)
-        ''', (client_id, user_id, template_name, content, timestamp))
+        INSERT INTO study_templates (client_id, user_id, name, content, timestamp, template_id)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        ''', (client_id, user_id, template_name, content, timestamp, template_name))
     
     conn.commit()
     conn.close()
     
     return jsonify({
         'status': 'ok',
-        'data': {
-            'id': template_id
-        }
+        'id': template_name
     })
 
 @app.route('/saveload.tradingview.com/1.1/study_templates', methods=['DELETE'])
@@ -655,19 +636,14 @@ def delete_study_template():
     """Delete a specific study template"""
     client_id = request.args.get('client')
     user_id = request.args.get('user')
-    
+    template_name = request.args.get('template')
+
     if not client_id or not user_id:
-        return jsonify({
-            'status': 'error',
-            'message': 'Missing client_id or user_id'
-        })
+        return jsonify({'status': 'error', 'message': 'Missing client_id or user_id'}), 400
     
-    template_name = request.args.get('template', '')
     if not template_name:
-        return jsonify({
-            'status': 'error',
-            'message': 'Missing template name'
-        })
+        return jsonify({'status': 'error', 'message': 'Missing template name'}), 400
+
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -680,15 +656,10 @@ def delete_study_template():
         conn.commit()
         conn.close()
     
-        return jsonify({
-            'status': 'ok'
-        })
+        return jsonify({'status': 'ok'})
     except Exception as e:
         logger.exception(f"Error deleting study template {template_name}: {str(e)}")
-        return jsonify({
-            'status': 'error',
-            'message': f'Error deleting study template: {str(e)}'
-        }), 500
+        return jsonify({'status': 'error', 'message': f'Error deleting study template: {str(e)}'}), 500
 
 
 def get_drawing_template(client_id, user_id, tool, name):
@@ -724,20 +695,13 @@ def get_all_drawing_templates(client_id, user_id, tool):
     cursor = conn.cursor()
     
     cursor.execute('''
-    SELECT template_id, name, timestamp
+    SELECT name, content
     FROM drawing_templates
     WHERE client_id = %s AND user_id = %s AND tool = %s
     ORDER BY timestamp DESC
     ''', (client_id, user_id, tool))
     
-    templates = []
-    for row in cursor.fetchall():
-        templates.append({
-            # 'id': row['template_id'],
-            'name': row['name'],
-            # 'timestamp': row['timestamp']
-        })
-    
+    templates = cursor.fetchall()
     conn.close()
     
     return jsonify({
@@ -768,8 +732,8 @@ def list_drawing_templates():
 @app.route('/saveload.tradingview.com/1.1/drawing_templates', methods=['POST'])
 def save_drawing_template():
     """Save a drawing template"""
-    client_id = request.args.get('clientId')
-    user_id = request.args.get('userId')
+    client_id = request.args.get('client')
+    user_id = request.args.get('user')
     
     if not client_id or not user_id:
         return jsonify({
@@ -777,16 +741,16 @@ def save_drawing_template():
             'message': 'Missing client_id or user_id'
         })
     
-    data = request.json
-    if not data:
+    # TradingView uses multipart/form-data for POST requests
+    name = request.form.get('name', '')
+    tool = request.form.get('tool', '')
+    content = request.form.get('content', '')
+    
+    if not name or not tool or not content:
         return jsonify({
             'status': 'error',
-            'message': 'Missing template data'
+            'message': 'Missing name, tool, or content'
         })
-    
-    name = data.get('name', '')
-    tool = data.get('tool', '')
-    content = data.get('content', '')
     timestamp = int(datetime.now().timestamp())
     
     conn = get_db_connection()
@@ -805,9 +769,9 @@ def save_drawing_template():
         ''', (content, timestamp, name, client_id, user_id, tool))
     else:
         cursor.execute('''
-        INSERT INTO drawing_templates (name, client_id, user_id, tool, content, timestamp)
-        VALUES (%s, %s, %s, %s, %s, %s)
-        ''', (name, client_id, user_id, tool, content, timestamp))
+        INSERT INTO drawing_templates (name, client_id, user_id, tool, content, timestamp, template_id)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        ''', (name, client_id, user_id, tool, content, timestamp, name))
     
     conn.commit()
     conn.close()
@@ -819,10 +783,10 @@ def save_drawing_template():
 @app.route('/saveload.tradingview.com/1.1/drawing_templates', methods=['DELETE'])
 def delete_drawing_template():
     """Delete a specific drawing template"""
-    client_id = request.args.get('clientId')
-    user_id = request.args.get('userId')
-    tool = request.args.get('tool', '')
-    name = request.args.get('name', '')    
+    client_id = request.args.get('client')
+    user_id = request.args.get('user')
+    tool = request.args.get('tool')
+    name = request.args.get('name')    
     if not client_id or not user_id:
         return jsonify({
             'status': 'error',
