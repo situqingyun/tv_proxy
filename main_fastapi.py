@@ -23,12 +23,29 @@ from datetime import datetime
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from typing import Optional, Dict, Any
+from pydantic import BaseModel
+import base64
 
 # Load environment variables from .env file if it exists
 load_dotenv()
 
 # Initialize FastAPI app
 app = FastAPI(title="TV Proxy", description="A FastAPI-based TV proxy application", version="0.1.0")
+
+# --- START: Snapshot-related setup ---
+
+# Create a directory for snapshots
+SNAPSHOTS_DIR = os.path.join(os.path.dirname(__file__), "snapshots")
+os.makedirs(SNAPSHOTS_DIR, exist_ok=True)
+
+# Mount the snapshots directory to serve static files
+app.mount("/snapshots", StaticFiles(directory=SNAPSHOTS_DIR), name="snapshots")
+
+# Define the request body model for snapshot data
+class SnapshotData(BaseModel):
+    data: str
+
+# --- END: Snapshot-related setup ---
 
 # Add CORS middleware
 app.add_middleware(
@@ -322,6 +339,43 @@ async def ws_proxy_url(request: Request):
     if base_url.endswith('/'):
         base_url = base_url[:-1]
     return {'proxyUrl': base_url}
+
+@app.post("/api/snapshot")
+async def create_snapshot(snapshot: SnapshotData, request: Request):
+    """
+    Receives a TradingView chart snapshot, saves it as an image, and returns the URL.
+    """
+    try:
+        # The Base64 data from TradingView is in the format "data:image/png;base64,iVBORw0KGgo..."
+        # We need to remove the header and keep only the Base64 encoded part.
+        header, encoded = snapshot.data.split(",", 1)
+        
+        # Decode the Base64 data
+        image_data = base64.b64decode(encoded)
+        
+        # Generate a unique filename
+        filename = f"{uuid.uuid4()}.png"
+        file_path = os.path.join(SNAPSHOTS_DIR, filename)
+        
+        # Write the image data to a file
+        with open(file_path, "wb") as f:
+            f.write(image_data)
+            
+        logger.info(f"Snapshot saved to {file_path}")
+        
+        # Construct the publicly accessible URL
+        # request.base_url will be something like http://127.0.0.1:5000/
+        image_url = f"{str(request.base_url).rstrip('/')}/snapshots/{filename}"
+        
+        # TradingView expects a JSON response in this format
+        return {
+            "status": "ok",
+            "url": image_url
+        }
+        
+    except Exception as e:
+        logger.exception("Error processing snapshot")
+        raise HTTPException(status_code=500, detail=f"Error processing snapshot: {str(e)}")
 
 # API routes - All specific API routes must come before generic proxy routes
 @app.get('/api/replay/random')
