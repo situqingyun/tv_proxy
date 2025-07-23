@@ -376,6 +376,9 @@
                         // 结束当前回放会话（如果有的话）
                         await finishCurrentReplaySession();
                         
+                        // 清空之前的图表标记
+                        clearAllDrawings();
+
                         // 清空交易状态
                         if (tradingState.inPosition) {
                             tradingState.inPosition = false;
@@ -1101,6 +1104,9 @@
                     // 结束当前回放会话（如果有的话）
                     await finishCurrentReplaySession();
                     
+                    // 清空之前的图表标记
+                    clearAllDrawings();
+
                     // 获取当前symbol和interval
                     let symbol = '';
                     let interval = '';
@@ -1286,6 +1292,9 @@
                         // 结束当前回放会话（如果有的话）
                         await finishCurrentReplaySession();
                         
+                        // 清空之前的图表标记
+                        clearAllDrawings();
+
                         // 将日期字符串转换为时间戳
                         var timestamp = new Date(this.value).getTime() / 1000;
                         
@@ -1919,6 +1928,20 @@
  
             // 图表标记相关函数
  
+            // 清空所有图表标记和绘图
+            function clearAllDrawings() {
+                if (!window.widget) return;
+                try {
+                    const chart = window.widget.chart();
+                    const shapeIds = chart.getAllShapes().map(shape => shape.id);
+                    shapeIds.forEach(id => chart.removeEntity(id));
+                    tradingState.markers = []; // 清空我们自己保存的标记ID
+                    console.log('已清空所有图表标记和绘图');
+                } catch (e) {
+                    console.error('清空图表标记失败:', e);
+                }
+            }
+
             // 添加买入标记（上箭头）
             async function addBuyMarker(price) {
                 if (!window.widget) return;
