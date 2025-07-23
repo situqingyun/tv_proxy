@@ -695,7 +695,7 @@ def get_all_drawing_templates(client_id, user_id, tool):
     cursor = conn.cursor()
     
     cursor.execute('''
-    SELECT name, content
+    SELECT name
     FROM drawing_templates
     WHERE client_id = %s AND user_id = %s AND tool = %s
     ORDER BY timestamp DESC
@@ -739,42 +739,49 @@ def save_drawing_template():
         return jsonify({
             'status': 'error',
             'message': 'Missing client_id or user_id'
-        })
+        }), 400
     
     # TradingView uses multipart/form-data for POST requests
-    name = request.form.get('name', '')
-    tool = request.form.get('tool', '')
-    content = request.form.get('content', '')
+    # The name and tool are in the query string, content is in the form body
+    name = request.args.get('name')
+    tool = request.args.get('tool')
+    content = request.form.get('content')
     
     if not name or not tool or not content:
         return jsonify({
             'status': 'error',
             'message': 'Missing name, tool, or content'
-        })
+        }), 400
     timestamp = int(datetime.now().timestamp())
     
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    cursor.execute('''
-    SELECT id FROM drawing_templates WHERE name = %s AND client_id = %s AND user_id = %s AND tool = %s
-    ''', (name, client_id, user_id, tool))
-    
-    row = cursor.fetchone()
-    if row:
+    try:
         cursor.execute('''
-        UPDATE drawing_templates
-        SET content = %s, timestamp = %s
-        WHERE name = %s AND client_id = %s AND user_id = %s AND tool = %s
-        ''', (content, timestamp, name, client_id, user_id, tool))
-    else:
-        cursor.execute('''
-        INSERT INTO drawing_templates (name, client_id, user_id, tool, content, timestamp, template_id)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-        ''', (name, client_id, user_id, tool, content, timestamp, name))
-    
-    conn.commit()
-    conn.close()
+        SELECT id FROM drawing_templates WHERE name = %s AND client_id = %s AND user_id = %s AND tool = %s
+        ''', (name, client_id, user_id, tool))
+        
+        row = cursor.fetchone()
+        if row:
+            cursor.execute('''
+            UPDATE drawing_templates
+            SET content = %s, timestamp = %s
+            WHERE id = %s
+            ''', (content, timestamp, row['id']))
+        else:
+            cursor.execute('''
+            INSERT INTO drawing_templates (name, client_id, user_id, tool, content, timestamp, template_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ''', (name, client_id, user_id, tool, content, timestamp, name))
+        
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        logger.exception(f"Error saving drawing template: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+    finally:
+        conn.close()
     
     return jsonify({
         'status': 'ok'
@@ -786,27 +793,32 @@ def delete_drawing_template():
     client_id = request.args.get('client')
     user_id = request.args.get('user')
     tool = request.args.get('tool')
-    name = request.args.get('name')    
+    name = request.args.get('name')
+
     if not client_id or not user_id:
-        return jsonify({
-            'status': 'error',
-            'message': 'Missing client_id or user_id'
-        })
+        return jsonify({'status': 'error', 'message': 'Missing client_id or user_id'}), 400
     
-    conn = get_db_connection()
-    cursor = conn.cursor()
+    if not tool or not name:
+        return jsonify({'status': 'error', 'message': 'Missing tool or name'}), 400
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+        DELETE FROM drawing_templates
+        WHERE name = %s AND client_id = %s AND user_id = %s AND tool = %s
+        ''', (name, client_id, user_id, tool))
     
-    cursor.execute('''
-    DELETE FROM drawing_templates
-    WHERE name = %s AND client_id = %s AND user_id = %s AND tool = %s
-    ''', (name, client_id, user_id, tool))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        logger.exception(f"Error deleting drawing template {name} for tool {tool}: {str(e)}")
+        return jsonify({'status': 'error', 'message': f'Error deleting drawing template: {str(e)}'}), 500
+    finally:
+        conn.close()
     
-    conn.commit()
-    conn.close()
-    
-    return jsonify({
-        'status': 'ok'
-    })
+    return jsonify({'status': 'ok'})
 
 # Socket.IO event handlers
 @socketio.on('connect')

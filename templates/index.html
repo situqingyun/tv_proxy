@@ -294,7 +294,7 @@
                 enabled_features: [
                     'study_templates',
                     'drawing_templates',
-                    'chart_template_storage',
+                    // 'chart_template_storage',    // doesn't support this
                     'pre_post_market_sessions',
                     'show_symbol_logos',
                     'show_exchange_logos',
@@ -345,6 +345,51 @@
                         const themeToSet = this.checked ? 'dark' : 'light'
                         window.widget.changeTheme(themeToSet, { disableUndo: true });
                     });
+                });
+
+                // 监听图表周期变化
+                const chart = window.widget.chart();
+                
+                // 监听周期变化
+                chart.onIntervalChanged().subscribe(null, function(interval) {
+                    console.log('图表周期已变更为:', interval);
+                    
+                    // 如果有原始周期且与当前不同，显示恢复按钮
+                    const restoreButton = document.getElementById('restore-interval');
+                    if (tradingState.originalInterval && interval !== tradingState.originalInterval) {
+                        if (restoreButton) {
+                            restoreButton.style.display = 'inline-block';
+                        }
+                    } else {
+                        if (restoreButton) {
+                            restoreButton.style.display = 'none';
+                        }
+                    }
+                });
+                
+                // 监听交易对变化
+                chart.onSymbolChanged().subscribe(null, async function(symbolInfo) {
+                    console.log('交易对已变更为:', symbolInfo.name);
+                    
+                    // 如果在回放中且有回放会话，则视为新的回放会话
+                    if (menu.style.display !== 'none') {
+                        // 结束当前回放会话（如果有的话）
+                        await finishCurrentReplaySession();
+                        
+                        // 清空交易状态
+                        if (tradingState.inPosition) {
+                            tradingState.inPosition = false;
+                            tradingState.positionType = null;
+                            tradingState.entryPrice = 0;
+                            clearPositionInfo();
+                            toggleTradingButtons(false);
+                        }
+                        
+                        // 如果是随机模式，重新请求随机回放起始点
+                        if (replayModeText && replayModeText.textContent.includes('随机K线')) {
+                            requestRandomReplayPoint();
+                        }
+                    }
                 });
             });
         }
@@ -2563,52 +2608,6 @@
                 }
             }
 
-            // 监听图表周期变化
-            window.widget.onChartReady(function() {
-                const chart = window.widget.chart();
-                
-                // 监听周期变化
-                chart.onIntervalChanged().subscribe(null, function(interval) {
-                    console.log('图表周期已变更为:', interval);
-                    
-                    // 如果有原始周期且与当前不同，显示恢复按钮
-                    const restoreButton = document.getElementById('restore-interval');
-                    if (tradingState.originalInterval && interval !== tradingState.originalInterval) {
-                        if (restoreButton) {
-                            restoreButton.style.display = 'inline-block';
-                        }
-                    } else {
-                        if (restoreButton) {
-                            restoreButton.style.display = 'none';
-                        }
-                    }
-                });
-                
-                // 监听交易对变化
-                chart.onSymbolChanged().subscribe(null, async function(symbolInfo) {
-                    console.log('交易对已变更为:', symbolInfo.name);
-                    
-                    // 如果在回放中且有回放会话，则视为新的回放会话
-                    if (menu.style.display !== 'none') {
-                        // 结束当前回放会话（如果有的话）
-                        await finishCurrentReplaySession();
-                        
-                        // 清空交易状态
-                        if (tradingState.inPosition) {
-                            tradingState.inPosition = false;
-                            tradingState.positionType = null;
-                            tradingState.entryPrice = 0;
-                            clearPositionInfo();
-                            toggleTradingButtons(false);
-                        }
-                        
-                        // 如果是随机模式，重新请求随机回放起始点
-                        if (replayModeText && replayModeText.textContent.includes('随机K线')) {
-                            requestRandomReplayPoint();
-                        }
-                    }
-                });
-            });
             
             // 恢复原始周期按钮
             const restoreIntervalButton = document.getElementById('restore-interval');
