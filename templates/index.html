@@ -401,9 +401,9 @@
     </script>
 </head>
 
-<body style="margin: 0px;">
+<body style="margin: 0px; touch-action: manipulation; -webkit-text-size-adjust: 100%; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none;">
 
-    <div id="chartContainer"></div>
+    <div id="chartContainer" style="height: 100vh; width: 100vw;"></div>
     <!-- Replay 浮动菜单 -->
     <div id="replay-menu">
         <div id="replay-mode-container" class="custom-dropdown" style="margin-right:6px;">
@@ -550,6 +550,71 @@
             cursor: move;
             border: 1px solid #222b;
             transition: left 0.2s, top 0.2s, bottom 0.2s, transform 0.2s;
+            max-width: calc(100vw - 20px);
+            overflow-x: auto;
+            flex-wrap: nowrap;
+        }
+        
+        /* 移动端适配 */
+        @media (max-width: 768px) {
+            #replay-menu {
+                flex-wrap: wrap;
+                gap: 4px;
+                padding: 6px 8px;
+                bottom: 10px;
+                left: 10px;
+                right: 10px;
+                transform: none;
+                width: calc(100vw - 20px);
+                max-width: none;
+                box-sizing: border-box;
+            }
+        }
+        
+        /* iPhone 15系列特定优化 */
+        @media (max-width: 430px) and (max-height: 932px) {
+            #replay-menu {
+                bottom: 5px;
+                left: 5px;
+                right: 5px;
+                width: calc(100vw - 10px);
+                padding: 4px 6px;
+                gap: 3px;
+                font-size: 13px;
+            }
+            
+            .trade-button {
+                padding: 6px 8px;
+                font-size: 12px;
+                min-width: 55px;
+            }
+            
+            .trade-input-group {
+                padding: 4px 6px;
+                min-width: 80px;
+            }
+            
+            .trade-input-group input,
+            .trade-input-group select {
+                width: 50px;
+                padding: 4px;
+                font-size: 12px;
+            }
+            
+            .custom-dropdown {
+                min-width: 110px;
+            }
+            
+            .dropdown-selected {
+                padding: 6px 8px;
+                font-size: 12px;
+            }
+            
+            .status-item {
+                padding: 3px 5px;
+                font-size: 10px;
+                min-width: 65px;
+            }
         }
         #debug-menu button {
             background: #23272e;
@@ -571,6 +636,13 @@
             min-width: 120px;
             cursor: pointer;
         }
+        
+        @media (max-width: 768px) {
+            .custom-dropdown {
+                min-width: 140px;
+                flex-shrink: 0;
+            }
+        }
         .dropdown-selected {
             display: flex;
             justify-content: space-between;
@@ -580,6 +652,14 @@
             padding: 6px 10px;
             border-radius: 4px;
             border: 1px solid #3a3f4b;
+        }
+        
+        @media (max-width: 768px) {
+            .dropdown-selected {
+                padding: 8px 12px;
+                font-size: 14px;
+                touch-action: manipulation;
+            }
         }
         .dropdown-arrow {
             font-size: 10px;
@@ -610,6 +690,15 @@
             align-items: center;
             gap: 8px;
         }
+        
+        @media (max-width: 768px) {
+            #trading-controls {
+                flex-wrap: wrap;
+                gap: 4px;
+                justify-content: center;
+                width: 100%;
+            }
+        }
         .trade-button {
             padding: 6px 10px;
             border-radius: 4px;
@@ -618,6 +707,17 @@
             font-weight: bold;
             cursor: pointer;
             transition: all 0.2s;
+            white-space: nowrap;
+            min-width: 60px;
+        }
+        
+        @media (max-width: 768px) {
+            .trade-button {
+                padding: 8px 12px;
+                font-size: 14px;
+                min-width: 70px;
+                touch-action: manipulation;
+            }
         }
         .trade-button:disabled {
             opacity: 0.5;
@@ -672,6 +772,15 @@
             padding: 4px 8px;
             border-radius: 4px;
             color: #fff;
+            min-width: 90px;
+        }
+        
+        @media (max-width: 768px) {
+            .trade-input-group {
+                padding: 6px 10px;
+                min-width: 100px;
+                flex-shrink: 0;
+            }
         }
         .trade-input-group label {
             font-size: 12px;
@@ -686,6 +795,16 @@
             padding: 4px;
             width: 60px;
             text-align: right;
+        }
+        
+        @media (max-width: 768px) {
+            .trade-input-group input,
+            .trade-input-group select {
+                padding: 6px;
+                width: 70px;
+                font-size: 14px;
+                touch-action: manipulation;
+            }
         }
         .trade-input-group span {
             font-size: 12px;
@@ -704,6 +823,16 @@
             gap: 4px;
             min-width: 80px;
         }
+        
+        @media (max-width: 768px) {
+            .replay-status {
+                flex-direction: row;
+                gap: 6px;
+                min-width: 100%;
+                justify-content: space-around;
+                flex-wrap: wrap;
+            }
+        }
         .status-item {
             display: flex;
             justify-content: space-between;
@@ -714,6 +843,16 @@
             font-size: 11px;
             color: white;
             border: 1px solid #3a3f4b;
+        }
+        
+        @media (max-width: 768px) {
+            .status-item {
+                padding: 4px 8px;
+                font-size: 12px;
+                min-width: 80px;
+                flex: 1;
+                max-width: calc(50% - 3px);
+            }
         }
         .status-label {
             color: #9ea5b0;
@@ -973,6 +1112,34 @@
         .trade-button.history:hover:not(:disabled) {
             background-color: #9C27B0;
         }
+        
+        /* 移动端弹窗优化 */
+        @media (max-width: 768px) {
+            .stats-modal,
+            .modal-container {
+                z-index: 10001;
+            }
+            
+            .modal-content {
+                width: 95%;
+                max-width: 95%;
+                max-height: 90vh;
+                margin: 5vh auto;
+            }
+            
+            .stats-modal {
+                width: 90%;
+                max-width: 90%;
+                padding: 15px;
+            }
+            
+            /* 确保弹窗内容可滚动 */
+            .modal-body {
+                max-height: calc(90vh - 80px);
+                overflow-y: auto;
+                -webkit-overflow-scrolling: touch;
+            }
+        }
     </style>
     <script>
         // 拖动浮动菜单
@@ -983,27 +1150,42 @@
             var isDragging = false;
             var offsetX = 0, offsetY = 0;
             var hasMoved = false;
-            // 只允许通过菜单空白区域拖动
-            menu.addEventListener('mousedown', function(e) {
+            // 只允许通过菜单空白区域拖动 - 支持触摸
+            function startDrag(e) {
                 if (e.target !== menu) return;
                 isDragging = true;
-                offsetX = e.clientX - menu.offsetLeft;
-                offsetY = e.clientY - menu.offsetTop;
+                const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+                const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+                offsetX = clientX - menu.offsetLeft;
+                offsetY = clientY - menu.offsetTop;
                 menu.style.transition = 'none';
-            });
-            document.addEventListener('mousemove', function(e) {
+                e.preventDefault();
+            }
+            
+            menu.addEventListener('mousedown', startDrag);
+            menu.addEventListener('touchstart', startDrag, { passive: false });
+            function moveDrag(e) {
                 if (isDragging) {
                     hasMoved = true;
-                    menu.style.left = (e.clientX - offsetX) + 'px';
-                    menu.style.top = (e.clientY - offsetY) + 'px';
+                    const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+                    const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+                    menu.style.left = (clientX - offsetX) + 'px';
+                    menu.style.top = (clientY - offsetY) + 'px';
                     menu.style.bottom = 'auto';
                     menu.style.transform = '';
+                    e.preventDefault();
                 }
-            });
-            document.addEventListener('mouseup', function() {
+            }
+            
+            function endDrag() {
                 isDragging = false;
                 menu.style.transition = '';
-            });
+            }
+            
+            document.addEventListener('mousemove', moveDrag);
+            document.addEventListener('touchmove', moveDrag, { passive: false });
+            document.addEventListener('mouseup', endDrag);
+            document.addEventListener('touchend', endDrag);
             // 关闭按钮
             var replayCloseBtn = document.getElementById('replay-close');
             if (replayCloseBtn) {

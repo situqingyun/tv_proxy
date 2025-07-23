@@ -1004,6 +1004,183 @@ async def delete_chart(
         logger.exception(f"Error deleting chart {chart}")
         raise HTTPException(status_code=500, detail=f"Error deleting chart: {str(e)}")
 
+# Study Templates API endpoints
+@app.get('/saveload.tradingview.com/1.1/study_templates')
+async def list_study_templates(
+    client: str = Query(..., alias="client"),
+    user: str = Query(..., alias="user"),
+    template: Optional[str] = Query(None, alias="template")
+):
+    """List all study templates for a user"""
+    if not client or not user:
+        raise HTTPException(status_code=400, detail="Missing client_id or user_id")
+        
+    if template:
+        return get_study_template(client, user, template)
+    else:
+        return get_all_study_templates_list(client, user)
+
+@app.post('/saveload.tradingview.com/1.1/study_templates')
+async def save_study_template(
+    client: str = Query(..., alias="client"),
+    user: str = Query(..., alias="user"),
+    name: str = Form(...),
+    content: str = Form(...)
+):
+    """Save a study template"""
+    if not client or not user:
+        raise HTTPException(status_code=400, detail="Missing client_id or user_id")
+    
+    if not name or not content:
+        raise HTTPException(status_code=400, detail="Missing template name or content")
+    
+    timestamp = int(datetime.now().timestamp())
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+    SELECT id FROM study_templates WHERE name = %s AND client_id = %s AND user_id = %s
+    ''', (name, client, user))
+    
+    row = cursor.fetchone()
+    if row:
+        cursor.execute('''
+        UPDATE study_templates
+        SET content = %s, timestamp = %s
+        WHERE name = %s AND client_id = %s AND user_id = %s
+        ''', (content, timestamp, name, client, user))
+    else:
+        cursor.execute('''
+        INSERT INTO study_templates (client_id, user_id, name, content, timestamp, template_id)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        ''', (client, user, name, content, timestamp, name))
+    
+    conn.commit()
+    conn.close()
+    
+    return {'status': 'ok', 'id': name}
+
+@app.delete('/saveload.tradingview.com/1.1/study_templates')
+async def delete_study_template(
+    client: str = Query(..., alias="client"),
+    user: str = Query(..., alias="user"),
+    template: str = Query(..., alias="template")
+):
+    """Delete a specific study template"""
+    if not client or not user:
+        raise HTTPException(status_code=400, detail="Missing client_id or user_id")
+    
+    if not template:
+        raise HTTPException(status_code=400, detail="Missing template name")
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+        DELETE FROM study_templates
+        WHERE name = %s AND client_id = %s AND user_id = %s
+        ''', (template, client, user))
+    
+        conn.commit()
+        conn.close()
+    
+        return {'status': 'ok'}
+    except Exception as e:
+        logger.exception(f"Error deleting study template {template}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error deleting study template: {str(e)}")
+
+# Drawing Templates API endpoints
+@app.get('/saveload.tradingview.com/1.1/drawing_templates')
+async def list_drawing_templates(
+    client: str = Query(..., alias="client"),
+    user: str = Query(..., alias="user"),
+    name: Optional[str] = Query(None, alias="name"),
+    tool: Optional[str] = Query(None, alias="tool")
+):
+    """List all drawing templates for a user"""
+    if not client or not user:
+        raise HTTPException(status_code=400, detail="Missing client_id or user_id")
+    
+    if name:
+        return get_drawing_template(client, user, tool or '', name)
+    else:
+        return get_all_drawing_templates(client, user, tool or '')
+
+@app.post('/saveload.tradingview.com/1.1/drawing_templates')
+async def save_drawing_template(
+    client: str = Query(..., alias="client"),
+    user: str = Query(..., alias="user"),
+    name: str = Query(..., alias="name"),
+    tool: str = Query(..., alias="tool"),
+    content: str = Form(...)
+):
+    """Save a drawing template"""
+    if not client or not user:
+        raise HTTPException(status_code=400, detail="Missing client_id or user_id")
+    
+    if not name or not tool or not content:
+        raise HTTPException(status_code=400, detail="Missing name, tool, or content")
+    
+    timestamp = int(datetime.now().timestamp())
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute('''
+        SELECT id FROM drawing_templates WHERE name = %s AND client_id = %s AND user_id = %s AND tool = %s
+        ''', (name, client, user, tool))
+        
+        row = cursor.fetchone()
+        if row:
+            cursor.execute('''
+            UPDATE drawing_templates
+            SET content = %s, timestamp = %s
+            WHERE id = %s
+            ''', (content, timestamp, row['id']))
+        else:
+            cursor.execute('''
+            INSERT INTO drawing_templates (name, client_id, user_id, tool, content, timestamp, template_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ''', (name, client, user, tool, content, timestamp, name))
+        
+        conn.commit()
+        conn.close()
+        return {'status': 'ok'}
+    except Exception as e:
+        logger.exception(f"Error saving drawing template: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete('/saveload.tradingview.com/1.1/drawing_templates')
+async def delete_drawing_template(
+    client: str = Query(..., alias="client"),
+    user: str = Query(..., alias="user"),
+    tool: str = Query(..., alias="tool"),
+    name: str = Query(..., alias="name")
+):
+    """Delete a specific drawing template"""
+    if not client or not user:
+        raise HTTPException(status_code=400, detail="Missing client_id or user_id")
+    
+    if not tool or not name:
+        raise HTTPException(status_code=400, detail="Missing tool or name")
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+        DELETE FROM drawing_templates
+        WHERE name = %s AND client_id = %s AND user_id = %s AND tool = %s
+        ''', (name, client, user, tool))
+    
+        conn.commit()
+        conn.close()
+        return {'status': 'ok'}
+    except Exception as e:
+        logger.exception(f"Error deleting drawing template {name} for tool {tool}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error deleting drawing template: {str(e)}")
+
 # Specific proxy routes for TradingView resources - must come before generic proxy route
 @app.get("/charting_library/{resource_path:path}")
 async def proxy_charting_library(resource_path: str):
@@ -1100,6 +1277,82 @@ def get_all_users_charts(client_id, user_id):
     charts = cursor.fetchall()
     conn.close()
     return {'status': 'ok', 'data': charts}
+
+# Study Templates API helper functions
+def get_all_study_templates_list(client_id, user_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+    SELECT name, content
+    FROM study_templates
+    WHERE client_id = %s AND user_id = %s
+    ORDER BY timestamp DESC
+    ''', (client_id, user_id))
+    
+    templates = cursor.fetchall()
+    conn.close()
+    
+    return {'status': 'ok', 'data': templates}
+
+def get_study_template(client_id, user_id, template_name):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+    SELECT name, content
+    FROM study_templates
+    WHERE client_id = %s AND user_id = %s AND name = %s
+    ''', (client_id, user_id, template_name))
+    
+    row = cursor.fetchone()
+    conn.close()
+    
+    if row:
+        return {'status': 'ok', 'data': {
+            'name': row['name'],
+            'content': row['content']
+        }}
+    else:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+# Drawing Templates API helper functions
+def get_drawing_template(client_id, user_id, tool, name):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+    SELECT name, content
+    FROM drawing_templates
+    WHERE name = %s AND client_id = %s AND user_id = %s AND tool = %s
+    ''', (name, client_id, user_id, tool))
+    
+    row = cursor.fetchone()
+    conn.close()
+    
+    if row:
+        return {'status': 'ok', 'data': {
+            'name': row['name'],
+            'content': row['content']
+        }}
+    else:
+        raise HTTPException(status_code=404, detail="Drawing template not found")
+
+def get_all_drawing_templates(client_id, user_id, tool):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+    SELECT name
+    FROM drawing_templates
+    WHERE client_id = %s AND user_id = %s AND tool = %s
+    ORDER BY timestamp DESC
+    ''', (client_id, user_id, tool))
+    
+    templates = cursor.fetchall()
+    conn.close()
+    
+    return {'status': 'ok', 'data': templates}
 
 def get_chart_content(client_id, user_id, chart_id):
     conn = get_db_connection()
