@@ -76,11 +76,11 @@ REPLAY_EARLIEST_TIMESTAMP = int(datetime.strptime(REPLAY_EARLIEST_DATE, '%Y-%m-%
 
 # PostgreSQL connection configuration
 DB_CONFIG = {
-    "host": os.environ.get("DB_HOST", "43.156.51.247"),
-    "port": os.environ.get("DB_PORT", "5432"),
-    "dbname": os.environ.get("DB_NAME", "tvdb"),
-    "user": os.environ.get("DB_USER", "tvuser"),
-    "password": os.environ.get("DB_PASSWORD", "bsh25fdsad77bxcb")
+    "host": os.environ.get("DB_HOST"),
+    "port": os.environ.get("DB_PORT"),
+    "dbname": os.environ.get("DB_NAME"),
+    "user": os.environ.get("DB_USER"),
+    "password": os.environ.get("DB_PASSWORD")
 }
 
 def get_db_connection():

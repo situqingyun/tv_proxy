@@ -366,32 +366,57 @@
                             restoreButton.style.display = 'none';
                         }
                     }
+                    
+                    // 在回放过程中切换周期时，调整visible range保持150根K线且end time不变
+                    if (window.widget && tradingState.replayStartTime) {
+                        adjustVisibleRangeOnIntervalChange(interval);
+                    }
                 });
                 
                 // 监听交易对变化
                 chart.onSymbolChanged().subscribe(null, async function(symbolInfo) {
                     console.log('交易对已变更为:', symbolInfo.name);
                     
+                    // 如果是程序主动切换交易对，跳过处理
+                    if (window.isChangingSymbolProgrammatically) {
+                        console.log('程序主动切换交易对，跳过onSymbolChanged处理');
+                        return;
+                    }
+                    
+                    // 获取回放菜单元素
+                    const replayMenu = document.getElementById('replay-menu');
+                    
                     // 如果在回放中且有回放会话，则视为新的回放会话
-                    if (menu.style.display !== 'none') {
-                        // 结束当前回放会话（如果有的话）
-                        await finishCurrentReplaySession();
+                    if (replayMenu && replayMenu.style.display !== 'none') {
+                        // 使用全局函数
+                        if (window.finishCurrentReplaySession) {
+                            await window.finishCurrentReplaySession();
+                        }
                         
                         // 清空之前的图表标记
-                        clearAllDrawings();
+                        if (window.clearAllDrawings) {
+                            window.clearAllDrawings();
+                        }
 
                         // 清空交易状态
-                        if (tradingState.inPosition) {
-                            tradingState.inPosition = false;
-                            tradingState.positionType = null;
-                            tradingState.entryPrice = 0;
-                            clearPositionInfo();
-                            toggleTradingButtons(false);
+                        if (window.tradingState && window.tradingState.inPosition) {
+                            window.tradingState.inPosition = false;
+                            window.tradingState.positionType = null;
+                            window.tradingState.entryPrice = 0;
+                            if (window.clearPositionInfo) {
+                                window.clearPositionInfo();
+                            }
+                            if (window.toggleTradingButtons) {
+                                window.toggleTradingButtons(false);
+                            }
                         }
                         
                         // 如果是随机模式，重新请求随机回放起始点
+                        const replayModeText = document.getElementById('replay-mode-text');
                         if (replayModeText && replayModeText.textContent.includes('随机K线')) {
-                            requestRandomReplayPoint();
+                            if (window.requestRandomReplayPoint) {
+                                window.requestRandomReplayPoint();
+                            }
                         }
                     }
                 });
@@ -1327,11 +1352,18 @@
                                 if (data.data.symbol && data.data.symbol !== symbol) {
                                     // 切换交易对 (使用 chart.setSymbol)
                                     console.log(`[诊断日志] 准备切换交易对到: ${data.data.symbol}`);
+                                    
+                                    // 设置标志位，表示这是程序主动切换交易对
+                                    window.isChangingSymbolProgrammatically = true;
+                                    
                                     const chart = window.widget.chart();
                                     chart.setSymbol(data.data.symbol, function() {
                                         console.log(`[诊断日志] 交易对切换成功: ${data.data.symbol}，现在设置回放范围`);
                                         // 设置图表范围
                                         setChartRangeFromTimestamp(data.data.start_time, data.data.bars_count);
+                                        
+                                        // 清除标志位
+                                        window.isChangingSymbolProgrammatically = false;
                                     });
                                 } else {
                                     // 直接设置图表范围
@@ -1358,6 +1390,9 @@
                             alert('请求随机回放起始点时出错');
                         });
                 }
+                
+                // 暴露到全局作用域
+                window.requestRandomReplayPoint = requestRandomReplayPoint;
                 
                 // 根据时间戳设置图表范围
                 function setChartRangeFromTimestamp(timestamp, barsCount) {
@@ -1399,8 +1434,7 @@
                             console.log('图表范围已设置');
                             // 更新状态显示
                             updateReplayStatus();
-                            // 记录市场起始价格
-                            recordMarketPrice('start');
+                            // 不在此处记录市场起始价格，只在第一次交易时创建会话
                             return { start: rangeStartTimestamp, end: rangeEndTimestamp };
                         }).catch(function(error) {
                             console.error('设置图表范围失败:', error);
@@ -1573,8 +1607,7 @@
                         console.log('图表范围已设置到选择的时间，显示100根K线');
                         // 更新状态显示
                         updateReplayStatus();
-                        // 记录市场起始价格
-                        recordMarketPrice('start');
+                        // 不在此处记录市场起始价格，只在第一次交易时创建会话
                         return { start: rangeStartTimestamp, end: rangeEndTimestamp };
                     }).catch(function(error) {
                         console.error('设置图表范围失败:', error);
@@ -1699,7 +1732,6 @@
                 switch(unit) {
                     case 's': // 秒
                         return value;
-                    case '': // 分钟 (默认单位)
                     case 'm': // 分钟
                         return value * 60;
                     case 'h': // 小时
@@ -1710,10 +1742,63 @@
                         return value * 86400 * 7;
                     case 'M': // 月 (大约30天)
                         return value * 86400 * 30;
-                    default: // 默认为分钟
+                    case '': // 无单位时需要判断数值大小
+                    default:
+                        // 对于无单位的情况，如果数值小于等于1440（一天的分钟数），视为分钟
+                        // 否则可能是其他格式，默认仍为分钟
                         return value * 60;
                 }
             }
+            
+            // 切换周期时调整visible range，保持150根K线且end time不变
+            function adjustVisibleRangeOnIntervalChange(newInterval) {
+                if (!window.widget) return;
+                
+                try {
+                    const chart = window.widget.chart();
+                    const currentRange = chart.getVisibleRange();
+                    
+                    if (!currentRange || !currentRange.to) {
+                        console.log('无法获取当前可见范围，跳过调整');
+                        return;
+                    }
+                    
+                    // 保持当前的end time
+                    const endTime = currentRange.to;
+                    
+                    // 计算新周期下每根K线的秒数
+                    const newSecondsPerBar = calculateSecondsPerBar(newInterval);
+                    
+                    // 计算新的start time，保持150根K线
+                    const startTime = endTime - (150 * newSecondsPerBar);
+                    
+                    console.log(`切换到周期 ${newInterval}，调整可见范围:`);
+                    console.log(`  保持结束时间: ${new Date(endTime * 1000).toLocaleString()}`);
+                    console.log(`  新开始时间: ${new Date(startTime * 1000).toLocaleString()}`);
+                    console.log(`  显示150根K线，每根 ${newSecondsPerBar} 秒`);
+                    
+                    // 设置新的可见范围
+                    chart.setVisibleRange({
+                        from: startTime,
+                        to: endTime
+                    }).then(function() {
+                        console.log('周期切换后的可见范围调整完成');
+                        
+                        // 更新期望的可见范围
+                        tradingState.expectedVisibleRange = { from: startTime, to: endTime };
+                        
+                        // 更新状态显示
+                        updateReplayStatus();
+                    }).catch(function(error) {
+                        console.error('调整可见范围失败:', error);
+                    });
+                } catch (e) {
+                    console.error('切换周期时调整可见范围出错:', e);
+                }
+            }
+            
+            // 暴露到全局作用域
+            window.adjustVisibleRangeOnIntervalChange = adjustVisibleRangeOnIntervalChange;
             
             // 交易相关功能
             var buyButton = document.getElementById('buy-button');
@@ -1749,6 +1834,12 @@
                 currentBarTime: null,
                 expectedVisibleRange: null
             };
+            
+            // 将交易状态暴露到全局作用域
+            window.tradingState = tradingState;
+            
+            // 初始化程序主动切换交易对的标志位
+            window.isChangingSymbolProgrammatically = false;
             
             // 状态更新定时器
             var statusUpdateTimer = null;
@@ -2102,6 +2193,10 @@
                     closePositionButton.disabled = !inPosition;
                 }
             }
+            
+            // 暴露到全局作用域
+            window.clearPositionInfo = clearPositionInfo;
+            window.toggleTradingButtons = toggleTradingButtons;
  
             function showPnLResult(pnl) {
                 var color = pnl >= 0 ? '#26a69a' : '#ef5350';
@@ -2124,6 +2219,9 @@
                     console.error('清空图表标记失败:', e);
                 }
             }
+            
+            // 暴露到全局作用域
+            window.clearAllDrawings = clearAllDrawings;
 
             // 添加买入标记（上箭头）
             async function addBuyMarker(price) {
@@ -2630,6 +2728,9 @@
                 // 设置周期
                 const chart = window.widget.chart();
                 // 切换到对应的交易对和周期
+                // 设置标志位，表示这是程序主动切换交易对
+                window.isChangingSymbolProgrammatically = true;
+                
                 chart.setSymbol(session.symbol, function() {
                     console.log('交易对切换成功:', session.symbol);
                     chart.setResolution(session.interval, function() {
@@ -2662,6 +2763,9 @@
                         
                         // 加载交易记录并添加标记
                         loadTradesAndAddMarkers(session.session_uuid);
+                        
+                        // 清除标志位
+                        window.isChangingSymbolProgrammatically = false;
                     });
                 });
             }
@@ -2975,6 +3079,8 @@
                         if (isFirstTrade && data.data && data.data.session_uuid) {
                             tradingState.replaySessionId = data.data.session_uuid;
                             console.log('新回放会话已创建，ID:', tradingState.replaySessionId);
+                            // 第一次交易时记录市场起始价格
+                            await recordMarketPrice('start');
                         }
                     } else {
                         console.error('交易记录保存失败:', data.message);
@@ -2987,12 +3093,7 @@
             // 记录市场价格的函数
             async function recordMarketPrice(priceType) {
                 if (!tradingState.replaySessionId) {
-                    // 如果还没有回放会话ID，需要先创建会话
-                    await createReplaySession();
-                }
-
-                if (!tradingState.replaySessionId) {
-                    console.error('无法记录市场价格：缺少回放会话ID');
+                    console.log('跳过记录市场价格：没有活跃的回放会话');
                     return;
                 }
 
@@ -3057,45 +3158,11 @@
                 // 清除当前会话ID，为新会话做准备
                 tradingState.replaySessionId = null;
             }
+            
+            // 暴露到全局作用域
+            window.finishCurrentReplaySession = finishCurrentReplaySession;
 
-            // 创建回放会话的函数
-            async function createReplaySession() {
-                if (tradingState.replaySessionId) {
-                    return; // 已经有会话ID了
-                }
-
-                try {
-                    const chart = window.widget.chart();
-                    const symbol_interval = window.widget.symbolInterval();
-                    const symbol = symbol_interval.symbol;
-                    const interval = symbol_interval.interval;
-
-                    const sessionData = {
-                        symbol: symbol,
-                        interval: interval,
-                        start_time: tradingState.replayStartTime,
-                        bars_count: tradingState.barsCount,
-                        client_id: 'tv_proxy',
-                        user_id: 'public_user'
-                    };
-
-                    const response = await fetch('/api/replay/sessions', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(sessionData)
-                    });
-
-                    const data = await response.json();
-                    if (data.status === 'ok' && data.data && data.data.session_uuid) {
-                        tradingState.replaySessionId = data.data.session_uuid;
-                        console.log('回放会话创建成功，ID:', tradingState.replaySessionId);
-                    } else {
-                        console.error('创建回放会话失败:', data.message);
-                    }
-                } catch (error) {
-                    console.error('创建回放会话时出错:', error);
-                }
-            }
+            // 注意: 回放会话现在只在第一次交易时通过 save-trade 接口创建
         })();
     </script>
 </body>
