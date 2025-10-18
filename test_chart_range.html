@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Chart Range Fix</title>
+</head>
+<body>
+    <h1>Chart Range Test</h1>
+    <p>Open the browser console to see the test results.</p>
+
+    <script>
+        // Test the timestamp conversion and validation
+        function testTimestampValidation() {
+            console.log("Testing timestamp validation...");
+
+            // Test cases
+            const testCases = [
+                { input: 1683259192, expected: true, description: "Valid Unix timestamp" },
+                { input: "1683259192", expected: true, description: "String Unix timestamp" },
+                { input: 1683259192000, expected: false, description: "Millisecond timestamp (too large)" },
+                { input: 0, expected: false, description: "Zero timestamp" },
+                { input: -1, expected: false, description: "Negative timestamp" },
+                { input: NaN, expected: false, description: "NaN timestamp" },
+                { input: null, expected: false, description: "Null timestamp" },
+                { input: undefined, expected: false, description: "Undefined timestamp" }
+            ];
+
+            testCases.forEach(test => {
+                const startTime = Math.floor(Number(test.input));
+                const isValid = !isNaN(startTime) && startTime > 0;
+                const passed = isValid === test.expected;
+
+                console.log(`${passed ? '✅' : '❌'} ${test.description}`);
+                console.log(`  Input: ${test.input}, Processed: ${startTime}, Valid: ${isValid}`);
+
+                if (isValid) {
+                    const date = new Date(startTime * 1000);
+                    console.log(`  Date: ${date.toISOString()}`);
+                }
+            });
+        }
+
+        // Test seconds per bar calculation
+        function testSecondsPerBar() {
+            console.log("\nTesting seconds per bar calculation...");
+
+            const intervals = {
+                '1': 60,
+                '3': 180,
+                '5': 300,
+                '15': 900,
+                '30': 1800,
+                '60': 3600,
+                '120': 7200,
+                '240': 14400,
+                'D': 86400,
+                '1D': 86400,
+                'W': 604800,
+                '1W': 604800
+            };
+
+            for (const [interval, expected] of Object.entries(intervals)) {
+                console.log(`Interval ${interval}: ${expected} seconds (${expected / 60} minutes, ${expected / 3600} hours)`);
+            }
+        }
+
+        // Test range calculation
+        function testRangeCalculation() {
+            console.log("\nTesting range calculation...");
+
+            const startTime = 1683259192; // May 5, 2023
+            const barsCount = 150;
+            const intervals = ['1', '60', 'D'];
+
+            intervals.forEach(interval => {
+                const secondsPerBar = interval === '1' ? 60 : (interval === '60' ? 3600 : 86400);
+                const endTime = startTime + (barsCount * secondsPerBar);
+
+                console.log(`\nInterval: ${interval}`);
+                console.log(`  Start: ${new Date(startTime * 1000).toISOString()}`);
+                console.log(`  End: ${new Date(endTime * 1000).toISOString()}`);
+                console.log(`  Duration: ${(endTime - startTime) / 3600} hours`);
+                console.log(`  Range object: { from: ${startTime}, to: ${endTime} }`);
+            });
+        }
+
+        // Run all tests
+        console.log("=".repeat(50));
+        console.log("CHART RANGE FIX TESTS");
+        console.log("=".repeat(50));
+
+        testTimestampValidation();
+        testSecondsPerBar();
+        testRangeCalculation();
+
+        console.log("\n" + "=".repeat(50));
+        console.log("Tests completed. Check if timestamps are valid Unix seconds (not milliseconds).");
+        console.log("TradingView's setVisibleRange expects timestamps in seconds.");
+    </script>
+</body>
+</html>

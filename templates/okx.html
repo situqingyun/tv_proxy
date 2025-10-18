@@ -1,0 +1,2310 @@
+<!DOCTYPE HTML>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,minimum-scale=1.0">
+    <title>OKX Data Source - Advanced Charts</title>
+
+    <!-- Socket.IO for WebSocket communications -->
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <!-- TradingView Charting Library -->
+    <script src="charting_library/charting_library.standalone.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+        }
+
+        #chartContainer {
+            height: 100vh;
+            width: 100vw;
+        }
+
+        /* Replay Menu Styles */
+        #replay-menu {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(22, 27, 34, 0.98);
+            backdrop-filter: blur(10px);
+            padding: 8px 12px;
+            border-radius: 12px;
+            border: 1px solid #30363d;
+            display: none;
+            align-items: center;
+            gap: 6px;
+            z-index: 1001;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            cursor: move;
+            user-select: none;
+            font-size: 13px;
+        }
+
+        #replay-menu button {
+            background: #21262d;
+            border: 1px solid #30363d;
+            color: #c9d1d9;
+            padding: 6px 10px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.2s;
+        }
+
+        #replay-menu button:hover {
+            background: #30363d;
+            transform: translateY(-1px);
+        }
+
+        #replay-menu select {
+            background: #21262d;
+            border: 1px solid #30363d;
+            color: #c9d1d9;
+            padding: 5px 8px;
+            border-radius: 6px;
+            font-size: 12px;
+        }
+
+        #replay-menu input[type="datetime-local"],
+        #replay-menu input[type="number"] {
+            background: #21262d;
+            border: 1px solid #30363d;
+            color: #c9d1d9;
+            padding: 5px 8px;
+            border-radius: 6px;
+            font-size: 12px;
+        }
+
+        .custom-dropdown {
+            position: relative;
+            display: inline-block;
+        }
+
+        .dropdown-selected {
+            background: #21262d;
+            border: 1px solid #30363d;
+            color: #c9d1d9;
+            padding: 6px 10px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .dropdown-arrow {
+            font-size: 10px;
+            margin-left: 4px;
+        }
+
+        .dropdown-options {
+            position: absolute;
+            bottom: 100%;
+            left: 0;
+            background: #1c2030;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            margin-bottom: 5px;
+            display: none;
+            z-index: 1002;
+            min-width: 120px;
+        }
+
+        .dropdown-option {
+            padding: 8px 12px;
+            cursor: pointer;
+            font-size: 12px;
+            color: #c9d1d9;
+            transition: background 0.2s;
+        }
+
+        .dropdown-option:hover {
+            background: #21262d;
+        }
+
+        .dropdown-option:first-child {
+            border-top-left-radius: 6px;
+            border-top-right-radius: 6px;
+        }
+
+        .dropdown-option:last-child {
+            border-bottom-left-radius: 6px;
+            border-bottom-right-radius: 6px;
+        }
+
+        .replay-divider {
+            width: 1px;
+            height: 24px;
+            background: #30363d;
+            margin: 0 6px;
+        }
+
+        .replay-status {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .status-label {
+            color: #8b949e;
+            font-size: 11px;
+        }
+
+        .status-value {
+            color: #58a6ff;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        #current-pnl-value.profit {
+            color: #3fb950;
+        }
+
+        #current-pnl-value.loss {
+            color: #f85149;
+        }
+
+        /* Trade Controls */
+        #trading-controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .trade-input-group {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .trade-input-group label {
+            color: #8b949e;
+            font-size: 11px;
+        }
+
+        .trade-button {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .trade-button.buy {
+            background: #238636;
+            color: white;
+        }
+
+        .trade-button.buy:hover:not(:disabled) {
+            background: #2ea043;
+        }
+
+        .trade-button.sell {
+            background: #da3633;
+            color: white;
+        }
+
+        .trade-button.sell:hover:not(:disabled) {
+            background: #f85149;
+        }
+
+        .trade-button.close {
+            background: #6e7681;
+            color: white;
+        }
+
+        .trade-button.close:hover:not(:disabled) {
+            background: #8b949e;
+        }
+
+        .trade-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .position-info {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 8px;
+            background: #0d1117;
+            border-radius: 6px;
+            border: 1px solid #30363d;
+            font-size: 11px;
+            display: none;
+        }
+
+        .position-info.active {
+            display: flex;
+        }
+
+        #position-type {
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        #position-type.buy {
+            color: #3fb950;
+        }
+
+        #position-type.sell {
+            color: #f85149;
+        }
+
+        /* Stats Modal */
+        .stats-modal {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #1c2030;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 20px;
+            z-index: 1003;
+            display: none;
+            min-width: 300px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+        }
+
+        .stats-modal.show {
+            display: block;
+        }
+
+        .stats-modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .stats-modal-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #c9d1d9;
+        }
+
+        .stats-modal-close {
+            background: none;
+            border: none;
+            color: #8b949e;
+            font-size: 24px;
+            cursor: pointer;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+
+        .stats-modal-close:hover {
+            background: #30363d;
+            color: #c9d1d9;
+        }
+
+        .stats-content {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .stats-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px;
+            background: #0d1117;
+            border-radius: 8px;
+            border: 1px solid #30363d;
+        }
+
+        .stats-label {
+            color: #8b949e;
+            font-size: 13px;
+        }
+
+        .stats-value {
+            font-size: 14px;
+            font-weight: 600;
+            color: #58a6ff;
+        }
+
+        .stats-value.profit {
+            color: #3fb950;
+        }
+
+        .stats-value.loss {
+            color: #f85149;
+        }
+
+        /* History Modal */
+        .modal-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1003;
+        }
+
+        .modal-container.show {
+            display: flex;
+        }
+
+        .modal-content {
+            background: #1c2030;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .modal-header {
+            padding: 20px;
+            border-bottom: 1px solid #30363d;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #c9d1d9;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            color: #8b949e;
+            font-size: 24px;
+            cursor: pointer;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+
+        .modal-close:hover {
+            background: #30363d;
+            color: #c9d1d9;
+        }
+
+        .modal-body {
+            padding: 20px;
+            overflow-y: auto;
+            flex: 1;
+        }
+
+        .history-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .history-item {
+            padding: 12px;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .history-item:hover {
+            background: #161b22;
+            border-color: #58a6ff;
+        }
+
+        .history-loading,
+        .history-empty {
+            text-align: center;
+            padding: 40px;
+            color: #8b949e;
+        }
+
+        .loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid #30363d;
+            border-top: 3px solid #58a6ff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Mobile Responsive */
+        @media (max-width: 768px) {
+            #replay-menu {
+                bottom: 10px;
+                right: 10px;
+                left: 10px;
+                padding: 6px 8px;
+                font-size: 12px;
+            }
+
+            #replay-menu button,
+            #replay-menu select,
+            #replay-menu input {
+                font-size: 11px;
+                padding: 4px 6px;
+            }
+
+            .modal-content {
+                width: 95%;
+                max-height: 90vh;
+            }
+        }
+    </style>
+
+    <!-- Additional styles for animations -->
+    <style>
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+
+        .pulse {
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes slideIn {
+            from { transform: translateY(100%); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+
+        .slide-in {
+            animation: slideIn 0.3s ease;
+        }
+    </style>
+    <script>
+        // Global variables for replay functionality
+        let replayMode = false;
+        let replayData = [];
+        let replayIndex = 0;
+        let replayInterval = null;
+        let replaySpeed = 1;
+        let currentPosition = null;
+        let trades = [];
+        let balance = 10000;
+        let leverage = 1;
+
+        // OKX Datafeed Implementation with Replay Support
+        class OKXDatafeed {
+            constructor() {
+                this.baseUrl = window.location.origin;
+                // TradingView 期望的格式：分钟用数字，天/周/月用字母
+                this.supportedResolutions = ['1', '3', '5', '15', '30', '60', '120', '240', '360', '720', 'D', 'W', 'M'];
+                this.configurationData = {
+                    supported_resolutions: this.supportedResolutions,
+                    exchanges: [{
+                        value: 'OKX',
+                        name: 'OKX',
+                        desc: 'OKX Exchange'
+                    }],
+                    symbols_types: [
+                        { name: 'Spot', value: 'spot' },
+                        { name: 'Futures', value: 'futures' },
+                        { name: 'Swap', value: 'swap' }
+                    ],
+                    supports_marks: false,
+                    supports_timescale_marks: false,
+                    supports_time: true,
+                    supports_search: true,
+                    futures_regex: /.*[-]SWAP$|.*[-]FUTURES$/
+                };
+            }
+
+            onReady(callback) {
+                console.log('[OKXDatafeed] onReady called');
+                setTimeout(() => callback(this.configurationData), 0);
+            }
+
+            searchSymbols(userInput, exchange, symbolType, onResultReadyCallback) {
+                console.log('[OKXDatafeed] searchSymbols:', userInput, 'type:', symbolType);
+
+                // Determine instrument type based on symbolType or search query
+                let instType = 'SPOT';
+                if (symbolType === 'futures' || userInput.toLowerCase().includes('swap') || userInput.toLowerCase().includes('perp')) {
+                    instType = 'SWAP';
+                } else if (symbolType === 'futures' || userInput.toLowerCase().includes('futures')) {
+                    instType = 'FUTURES';
+                }
+
+                // Fetch real symbols from OKX API
+                const params = new URLSearchParams({
+                    query: userInput,
+                    inst_type: instType,
+                    limit: '50'
+                });
+
+                fetch(`${this.baseUrl}/api/okx/symbol-search?${params}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        console.log('[OKXDatafeed] Symbol search response:', data);
+
+                        if (data.status === 'ok' && data.data) {
+                            // Format results for TradingView
+                            const results = data.data.map(item => ({
+                                symbol: item.symbol,
+                                ticker: item.ticker || item.symbol,
+                                full_name: item.full_name || item.symbol,
+                                description: item.description || item.full_name || item.symbol,
+                                exchange: item.exchange || 'OKX',
+                                type: item.type || 'crypto'
+                            }));
+
+                            onResultReadyCallback(results);
+                        } else {
+                            console.error('[OKXDatafeed] Symbol search failed:', data.message);
+                            // Fallback to hardcoded popular symbols
+                            const fallbackSymbols = [
+                                { symbol: 'BTC-USDT', ticker: 'BTC-USDT', full_name: 'BTC/USDT', description: 'Bitcoin/Tether', exchange: 'OKX', type: 'crypto' },
+                                { symbol: 'ETH-USDT', ticker: 'ETH-USDT', full_name: 'ETH/USDT', description: 'Ethereum/Tether', exchange: 'OKX', type: 'crypto' },
+                                { symbol: 'SOL-USDT', ticker: 'SOL-USDT', full_name: 'SOL/USDT', description: 'Solana/Tether', exchange: 'OKX', type: 'crypto' }
+                            ];
+
+                            const filtered = fallbackSymbols.filter(s =>
+                                s.symbol.toLowerCase().includes(userInput.toLowerCase()) ||
+                                s.description.toLowerCase().includes(userInput.toLowerCase())
+                            );
+
+                            onResultReadyCallback(filtered);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('[OKXDatafeed] Symbol search error:', error);
+                        // Return empty array on error
+                        onResultReadyCallback([]);
+                    });
+            }
+
+            resolveSymbol(symbolName, onSymbolResolvedCallback, onResolveErrorCallback) {
+                console.log('[OKXDatafeed] resolveSymbol:', symbolName);
+
+                // Try to fetch detailed symbol info from the API
+                const params = new URLSearchParams({
+                    query: symbolName,
+                    inst_type: 'SPOT',
+                    limit: '1'
+                });
+
+                fetch(`${this.baseUrl}/api/okx/symbol-search?${params}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        let pricescale = 100;
+                        let minmov = 1;
+                        let volumePrecision = 8;
+
+                        // Determine precision based on symbol
+                        if (symbolName.includes('BTC')) {
+                            pricescale = 10; // 1 decimal place for BTC pairs
+                        } else if (symbolName.includes('ETH')) {
+                            pricescale = 10; // 1 decimal place for ETH pairs
+                        } else if (symbolName.includes('SHIB') || symbolName.includes('DOGE')) {
+                            pricescale = 100000000; // 8 decimal places for small value coins
+                        } else {
+                            pricescale = 100; // 2 decimal places for most others
+                        }
+
+                        // Extract base and quote currencies from symbol
+                        const parts = symbolName.split('-');
+                        const baseCurrency = parts[0] || '';
+                        const quoteCurrency = parts[1] || 'USDT';
+
+                        const symbolInfo = {
+                            name: symbolName,
+                            ticker: symbolName,
+                            full_name: `${baseCurrency}/${quoteCurrency}`,
+                            description: `${baseCurrency}/${quoteCurrency}`,
+                            type: 'crypto',
+                            session: '24x7',
+                            timezone: 'Etc/UTC',
+                            exchange: 'OKX',
+                            listed_exchange: 'OKX',
+                            minmov: minmov,
+                            pricescale: pricescale,
+                            has_intraday: true,
+                            has_daily: true,
+                            has_weekly_and_monthly: true,
+                            has_no_volume: false,
+                            intraday_multipliers: ['1', '3', '5', '15', '30', '60', '120', '240'],
+                            supported_resolutions: this.supportedResolutions,
+                            volume_precision: volumePrecision,
+                            data_status: 'streaming',
+                            currency_code: quoteCurrency,
+                            format: 'price'
+                        };
+
+                        console.log('[OKXDatafeed] Resolved symbol:', symbolInfo);
+                        setTimeout(() => onSymbolResolvedCallback(symbolInfo), 0);
+                    })
+                    .catch(error => {
+                        console.error('[OKXDatafeed] Error resolving symbol:', error);
+                        // Fallback to basic symbol info
+                        const parts = symbolName.split('-');
+                        const symbolInfo = {
+                            name: symbolName,
+                            ticker: symbolName,
+                            full_name: symbolName.replace('-', '/'),
+                            description: symbolName.replace('-', '/'),
+                            type: 'crypto',
+                            session: '24x7',
+                            timezone: 'Etc/UTC',
+                            exchange: 'OKX',
+                            listed_exchange: 'OKX',
+                            minmov: 1,
+                            pricescale: 100,
+                            has_intraday: true,
+                            has_daily: true,
+                            has_weekly_and_monthly: true,
+                            has_no_volume: false,
+                            supported_resolutions: this.supportedResolutions,
+                            volume_precision: 8,
+                            data_status: 'streaming',
+                            currency_code: parts[1] || 'USDT',
+                            format: 'price'
+                        };
+                        setTimeout(() => onSymbolResolvedCallback(symbolInfo), 0);
+                    });
+            }
+
+            getBars(symbolInfo, resolution, periodParams, onHistoryCallback, onErrorCallback, firstDataRequest) {
+                console.log('[OKXDatafeed] getBars called with:', {
+                    symbolInfo,
+                    resolution,
+                    periodParams,
+                    firstDataRequest,
+                    argCount: arguments.length
+                });
+
+                // Check if in replay mode
+                if (replayMode && replayData.length > 0) {
+                    // Return replay data
+                    const bars = replayData.slice(0, replayIndex + 1);
+                    console.log(`[OKXDatafeed] Replay mode: returning ${bars.length} bars`);
+                    onHistoryCallback(bars, { noData: bars.length === 0 });
+                    return;
+                }
+
+                // Handle both old and new API signatures
+                let fromTimestamp, toTimestamp;
+
+                if (typeof periodParams === 'object' && periodParams !== null) {
+                    // New API: periodParams is an object with from, to, countBack
+                    fromTimestamp = periodParams.from;
+                    toTimestamp = periodParams.to || Date.now();
+                } else {
+                    // Old API: periodParams is actually 'from', and onHistoryCallback is 'to'
+                    fromTimestamp = periodParams;
+                    toTimestamp = onHistoryCallback;
+                    // Shift other parameters
+                    onHistoryCallback = onErrorCallback;
+                    onErrorCallback = firstDataRequest;
+                    firstDataRequest = arguments[6];
+                }
+
+                // Convert to numbers if needed
+                fromTimestamp = Number(fromTimestamp);
+                toTimestamp = Number(toTimestamp);
+
+                // Validate timestamps
+                if (!fromTimestamp || !toTimestamp || isNaN(fromTimestamp) || isNaN(toTimestamp)) {
+                    console.error('[OKXDatafeed] Invalid timestamps after conversion:', {
+                        converted: { fromTimestamp, toTimestamp }
+                    });
+                    onHistoryCallback([], { noData: true });
+                    return;
+                }
+
+                // Detect if timestamps are in seconds or milliseconds
+                // If timestamp > year 3000 in seconds (95617584000), it's likely in milliseconds
+                let fromMs, toMs;
+                if (fromTimestamp > 95617584000) {
+                    // Already in milliseconds
+                    fromMs = Math.floor(fromTimestamp);
+                    toMs = Math.floor(toTimestamp);
+                } else {
+                    // In seconds, convert to milliseconds
+                    fromMs = Math.floor(fromTimestamp * 1000);
+                    toMs = Math.floor(toTimestamp * 1000);
+                }
+
+                try {
+                    console.log('[OKXDatafeed] getBars:', {
+                        symbol: symbolInfo.name,
+                        resolution,
+                        from: fromTimestamp,
+                        to: toTimestamp,
+                        fromDate: new Date(fromMs).toISOString(),
+                        toDate: new Date(toMs).toISOString(),
+                        firstDataRequest
+                    });
+                } catch (e) {
+                    console.error('[OKXDatafeed] Date conversion error:', e, { fromMs, toMs });
+                }
+
+                // Convert resolution to OKX format
+                let okxInterval = resolution;
+                if (resolution === '1') okxInterval = '1m';
+                else if (resolution === '3') okxInterval = '3m';
+                else if (resolution === '5') okxInterval = '5m';
+                else if (resolution === '15') okxInterval = '15m';
+                else if (resolution === '30') okxInterval = '30m';
+                else if (resolution === '60') okxInterval = '1H';
+                else if (resolution === '120') okxInterval = '2H';
+                else if (resolution === '240') okxInterval = '4H';
+                else if (resolution === '360') okxInterval = '6H';
+                else if (resolution === '720') okxInterval = '12H';
+                else if (resolution === '1D' || resolution === 'D') okxInterval = '1D';
+                else if (resolution === '1W' || resolution === 'W') okxInterval = '1W';
+                else if (resolution === '1M' || resolution === 'M') okxInterval = '1M';
+                else okxInterval = '1H'; // Default fallback
+
+                // Build query parameters
+                const params = new URLSearchParams({
+                    symbol: symbolInfo.name,
+                    interval: okxInterval,
+                    limit: '300',
+                    start_time: fromMs, // Already converted to milliseconds
+                    end_time: toMs
+                });
+
+                console.log(`[OKXDatafeed] Fetching: ${this.baseUrl}/api/okx/klines?${params}`);
+
+                fetch(`${this.baseUrl}/api/okx/klines?${params}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        console.log('[OKXDatafeed] API Response:', data);
+
+                        if (data.status === 'ok' && data.data) {
+                            const bars = data.data.map(kline => {
+                                // TradingView expects time in milliseconds
+                                const bar = {
+                                    time: kline.open_time, // Already in milliseconds from API
+                                    open: parseFloat(kline.open_price),
+                                    high: parseFloat(kline.high_price),
+                                    low: parseFloat(kline.low_price),
+                                    close: parseFloat(kline.close_price),
+                                    volume: parseFloat(kline.volume)
+                                };
+                                //console.log('[OKXDatafeed] Bar:', {
+                                //    time: bar.time,
+                                //    date: new Date(bar.time).toISOString(),
+                                //    ohlcv: `O:${bar.open} H:${bar.high} L:${bar.low} C:${bar.close} V:${bar.volume}`
+                                //});
+                                return bar;
+                            });
+
+                            // Sort bars by time (ascending for TradingView)
+                            bars.sort((a, b) => a.time - b.time);
+
+                            console.log(`[OKXDatafeed] Loaded ${bars.length} bars, range: ${bars.length > 0 ? new Date(bars[0].time).toISOString() + ' to ' + new Date(bars[bars.length-1].time).toISOString() : 'empty'}`);
+                            onHistoryCallback(bars, { noData: bars.length === 0 });
+
+                            // Update status
+                            if (bars.length > 0) {
+                                this.updateStatus(symbolInfo.name, bars[bars.length - 1]);
+                            }
+                        } else {
+                            console.error('[OKXDatafeed] Error in response:', data);
+                            onHistoryCallback([], { noData: true });
+                        }
+                    })
+                    .catch(error => {
+                        console.error('[OKXDatafeed] Fetch error:', error);
+                        if (typeof onErrorCallback === 'function') {
+                            onErrorCallback(error);
+                        } else {
+                            onHistoryCallback([], { noData: true });
+                        }
+                    });
+            }
+
+            subscribeBars(symbolInfo, resolution, onRealtimeCallback, subscriberUID, onResetCacheNeededCallback) {
+                console.log('[OKXDatafeed] subscribeBars:', symbolInfo.name, resolution);
+
+                if (replayMode) {
+                    // In replay mode, use replay data for updates
+                    this.realtimeCallback = onRealtimeCallback;
+                } else {
+                    // For normal mode, use polling every 10 seconds for real-time updates
+                    this.realtimeInterval = setInterval(() => {
+                        this.getLatestBar(symbolInfo, resolution, onRealtimeCallback);
+                    }, 10000);
+                }
+            }
+
+            unsubscribeBars(subscriberUID) {
+                console.log('[OKXDatafeed] unsubscribeBars:', subscriberUID);
+                if (this.realtimeInterval) {
+                    clearInterval(this.realtimeInterval);
+                    this.realtimeInterval = null;
+                }
+            }
+
+            getLatestBar(symbolInfo, resolution, onRealtimeCallback) {
+                const now = Math.floor(Date.now() / 1000);
+                const from = now - 3600; // Get last hour of data
+
+                // Convert resolution to OKX format (same as getBars)
+                let okxInterval = resolution;
+                if (resolution === '1') okxInterval = '1m';
+                else if (resolution === '3') okxInterval = '3m';
+                else if (resolution === '5') okxInterval = '5m';
+                else if (resolution === '15') okxInterval = '15m';
+                else if (resolution === '30') okxInterval = '30m';
+                else if (resolution === '60') okxInterval = '1H';
+                else if (resolution === '120') okxInterval = '2H';
+                else if (resolution === '240') okxInterval = '4H';
+                else if (resolution === '360') okxInterval = '6H';
+                else if (resolution === '720') okxInterval = '12H';
+                else if (resolution === '1D' || resolution === 'D') okxInterval = '1D';
+                else if (resolution === '1W' || resolution === 'W') okxInterval = '1W';
+                else if (resolution === '1M' || resolution === 'M') okxInterval = '1M';
+
+                const params = new URLSearchParams({
+                    symbol: symbolInfo.name,
+                    interval: okxInterval,
+                    limit: '1'
+                });
+
+                fetch(`${this.baseUrl}/api/okx/klines?${params}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'ok' && data.data && data.data.length > 0) {
+                            const kline = data.data[0];
+                            const bar = {
+                                time: kline.open_time, // Already in milliseconds from API
+                                open: parseFloat(kline.open_price),
+                                high: parseFloat(kline.high_price),
+                                low: parseFloat(kline.low_price),
+                                close: parseFloat(kline.close_price),
+                                volume: parseFloat(kline.volume)
+                            };
+
+                            onRealtimeCallback(bar);
+                            this.updateStatus(symbolInfo.name, bar);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('[OKXDatafeed] Real-time update error:', error);
+                    });
+            }
+
+            updateStatus(symbol, latestBar) {
+                if (!latestBar) return;
+
+                const currentPrice = latestBar.close;
+
+                // Update price display
+                const priceDisplay = document.getElementById('current-price');
+                if (priceDisplay) {
+                    priceDisplay.textContent = currentPrice.toFixed(2);
+                }
+
+                // Update position P&L if exists
+                if (currentPosition) {
+                    const pnl = calculatePnL(currentPosition, currentPrice);
+                    updatePositionDisplay(pnl);
+                }
+            }
+        }
+
+        // Trading state management
+        let tradingState = {
+            inPosition: false,
+            positionType: null, // 'buy' or 'sell'
+            entryPrice: 0,
+            accountBalance: 10000,
+            investAmount: 100,
+            leverage: 1,
+            entryTime: null,
+            entryBarIndex: 0,
+            replaySessionId: null, // 回放会话ID
+            replayStartTime: null, // 回放开始时间
+            replayEndTime: null, // 回放结束时间
+            barsCount: 150, // 默认K线数量
+            currentBarTime: null, // 当前K线时间
+            expectedVisibleRange: null, // 期望的图表范围
+            originalInterval: null, // 保存原始周期
+            isFirstTrade: true, // 标记是否是第一次交易
+            marketPriceStart: null, // 市场起始价格
+            marketPriceEnd: null // 市场结束价格
+        };
+
+        // Playback control
+        let playbackInterval = null;
+        let isPlaying = false;
+
+        // 计算每个bar的秒数
+        /**
+         * Calculate seconds per bar based on interval
+         * @param {string} interval - Chart interval (e.g., '1', '60', '1D', '1H')
+         * @returns {number} Seconds per bar
+         *
+         * Supports both standard intervals (via lookup table) and custom intervals (via parsing)
+         * Examples: '1' → 60s, '60' → 3600s, '1D' → 86400s, '2D' → 172800s, '90' → 5400s
+         */
+        function calculateSecondsPerBar(interval) {
+            // Standard interval lookup table (for performance)
+            const intervalMap = {
+                '1': 60,
+                '3': 180,
+                '5': 300,
+                '15': 900,
+                '30': 1800,
+                '60': 3600,
+                '120': 7200,
+                '240': 14400,
+                '360': 21600,
+                '720': 43200,
+                '1D': 86400,
+                'D': 86400,
+                '1W': 604800,
+                'W': 604800,
+                '1M': 2592000,
+                'M': 2592000
+            };
+
+            // Fast path: check if interval is in lookup table
+            if (intervalMap[interval] !== undefined) {
+                return intervalMap[interval];
+            }
+
+            // Dynamic path: parse interval string (for non-standard intervals)
+            // This supports formats like '2D', '90', '3h', etc.
+            try {
+                // Extract numeric value and unit
+                const value = parseInt(interval);
+                const unit = interval.replace(/[0-9]/g, '');
+
+                if (isNaN(value)) {
+                    console.warn('[calculateSecondsPerBar] Invalid interval, using default:', interval);
+                    return 3600; // Default 1 hour
+                }
+
+                // Calculate based on unit
+                switch(unit) {
+                    case 's':  // seconds
+                        return value;
+                    case 'm':  // minutes
+                        return value * 60;
+                    case 'h':  // hours
+                    case 'H':
+                        return value * 60 * 60;
+                    case 'D':  // days
+                        return value * 86400;
+                    case 'W':  // weeks
+                        return value * 86400 * 7;
+                    case 'M':  // months (approximate as 30 days)
+                        return value * 86400 * 30;
+                    case '':   // no unit, default to minutes
+                    default:
+                        // Pure number without unit is treated as minutes
+                        return value * 60;
+                }
+            } catch (error) {
+                console.error('[calculateSecondsPerBar] Error parsing interval:', interval, error);
+                return 3600; // Default 1 hour
+            }
+        }
+
+        // Update replay status display
+        function updateReplayStatus() {
+            const remainingBarsEl = document.getElementById('remaining-bars-value');
+            const accountBalanceEl = document.getElementById('account-balance-value');
+            const currentPnLEl = document.getElementById('current-pnl-value');
+            const currentPnLContainer = document.getElementById('current-pnl');
+
+            if (tradingState.expectedVisibleRange && tradingState.replayEndTime) {
+                const currentTime = tradingState.expectedVisibleRange.to;
+                const interval = window.widget ? window.widget.chart().resolution() : '1';
+                const secondsPerBar = calculateSecondsPerBar(interval);
+                const remainingBars = Math.max(0, Math.floor((tradingState.replayEndTime - currentTime) / secondsPerBar));
+
+                if (remainingBarsEl) {
+                    remainingBarsEl.textContent = remainingBars;
+                }
+            }
+
+            if (accountBalanceEl) {
+                accountBalanceEl.textContent = tradingState.accountBalance.toFixed(2);
+            }
+
+            if (tradingState.inPosition && currentPnLEl && currentPnLContainer) {
+                const currentPrice = getCurrentPrice();
+                if (currentPrice) {
+                    const pnl = calculateCurrentPnL(currentPrice);
+                    currentPnLEl.textContent = (pnl >= 0 ? '+' : '') + pnl.toFixed(2);
+                    currentPnLEl.className = 'status-value ' + (pnl >= 0 ? 'profit' : 'loss');
+                    currentPnLContainer.style.display = 'block';
+                }
+            } else if (currentPnLContainer) {
+                currentPnLContainer.style.display = 'none';
+            }
+        }
+
+        // Start playback
+        function startPlayback() {
+            if (isPlaying) return;
+
+            isPlaying = true;
+            const playBtn = document.getElementById('replay-play');
+            const pauseBtn = document.getElementById('replay-pause');
+
+            if (playBtn) playBtn.style.display = 'none';
+            if (pauseBtn) pauseBtn.style.display = 'inline-block';
+
+            const speedSel = document.getElementById('replay-speed');
+            const speed = speedSel ? parseInt(speedSel.value) : 1;
+
+            playbackInterval = setInterval(() => {
+                advanceChartRange(speed).then(result => {
+                    if (!result) {
+                        stopPlayback();
+                    }
+                });
+            }, 1000);
+        }
+
+        // Stop playback
+        function stopPlayback() {
+            if (!isPlaying) return;
+
+            isPlaying = false;
+            if (playbackInterval) {
+                clearInterval(playbackInterval);
+                playbackInterval = null;
+            }
+
+            const playBtn = document.getElementById('replay-play');
+            const pauseBtn = document.getElementById('replay-pause');
+
+            if (playBtn) playBtn.style.display = 'inline-block';
+            if (pauseBtn) pauseBtn.style.display = 'none';
+        }
+
+        /**
+         * Advance chart visible range by specified number of bars (for replay playback)
+         * @param {number} barsToAdvance - Number of bars to advance (e.g., 1 for 1x speed, 5 for 5x speed)
+         * @returns {Promise} Resolves with new range or null if error
+         *
+         * Note:
+         * - All timestamps use SECONDS, not milliseconds
+         * - Updates tradingState.expectedVisibleRange and tradingState.currentBarTime
+         * - Stops playback if replay end time is reached
+         */
+        function advanceChartRange(barsToAdvance) {
+            if (!window.widget) {
+                console.error('[advanceChartRange] Widget not initialized');
+                return Promise.resolve(null);
+            }
+
+            try {
+                const chart = window.widget.chart();
+                const interval = chart.resolution();
+                const secondsPerBar = calculateSecondsPerBar(interval);
+
+                // Check if we have a valid expected range
+                const range = tradingState.expectedVisibleRange;
+                if (!range || !range.from || !range.to) {
+                    console.error('[advanceChartRange] Expected range not set or invalid');
+                    stopPlayback();
+                    return Promise.resolve(null);
+                }
+
+                // Calculate new range (all in seconds)
+                const secondsToAdvance = barsToAdvance * secondsPerBar;
+                const newFrom = range.from + secondsToAdvance;
+                const newTo = range.to + secondsToAdvance;
+
+                // Check if we've reached the replay end time
+                if (tradingState.replayEndTime && newTo > tradingState.replayEndTime) {
+                    console.log('[advanceChartRange] Reached replay end time, stopping playback');
+                    finishCurrentReplaySession();
+                    stopPlayback();
+                    return Promise.resolve(null);
+                }
+
+                // Update state (all in seconds)
+                tradingState.currentBarTime = newTo;
+                tradingState.expectedVisibleRange = { from: newFrom, to: newTo };
+
+                console.log('[advanceChartRange] Advancing by', barsToAdvance, 'bars:', {
+                    from: newFrom,
+                    to: newTo,
+                    fromDate: new Date(newFrom * 1000).toISOString(),
+                    toDate: new Date(newTo * 1000).toISOString()
+                });
+
+                // Set visible range (TradingView expects SECONDS)
+                return chart.setVisibleRange({
+                    from: newFrom,
+                    to: newTo
+                }).then(() => {
+                    updateReplayStatus();
+                    return { start: newFrom, end: newTo };
+                }).catch(error => {
+                    console.error('[advanceChartRange] Failed to set chart range:', error);
+                    console.error('[advanceChartRange] Range values (seconds):', { from: newFrom, to: newTo });
+                    return null;
+                });
+            } catch(e) {
+                console.error('[advanceChartRange] Unexpected error:', e);
+                return Promise.resolve(null);
+            }
+        }
+
+        // Get current price from chart
+        function getCurrentPrice() {
+            try {
+                if (!window.widget) return 0;
+
+                // Use a hardcoded price for now (will be improved later with actual chart data)
+                // This is a temporary solution to avoid errors
+                const defaultPrices = {
+                    'BTC-USDT': 45000,
+                    'ETH-USDT': 2500,
+                    'SOL-USDT': 100,
+                    'DOGE-USDT': 0.08,
+                    'ADA-USDT': 0.5,
+                    'MATIC-USDT': 0.8,
+                    'DOT-USDT': 7,
+                    'SHIB-USDT': 0.000009,
+                    'AVAX-USDT': 35,
+                    'LINK-USDT': 15
+                };
+
+                const chart = window.widget.chart();
+                const symbol = chart.symbol();
+
+                // Return default price for the symbol or fallback
+                return defaultPrices[symbol] || tradingState.entryPrice || 50000;
+            } catch(e) {
+                console.error('Error getting current price:', e);
+                return tradingState.entryPrice || 50000;
+            }
+        }
+
+        // Calculate current P&L
+        function calculateCurrentPnL(currentPrice) {
+            if (!tradingState.inPosition) return 0;
+
+            const quantity = tradingState.investAmount * tradingState.leverage / tradingState.entryPrice;
+            let pnl = 0;
+
+            if (tradingState.positionType === 'buy') {
+                pnl = (currentPrice - tradingState.entryPrice) * quantity;
+            } else {
+                pnl = (tradingState.entryPrice - currentPrice) * quantity;
+            }
+
+            return pnl;
+        }
+
+        // Clear all drawings
+        function clearAllDrawings() {
+            try {
+                if (window.widget) {
+                    const chart = window.widget.chart();
+                    chart.removeAllShapes();
+                    chart.removeAllStudies();
+                }
+            } catch(e) {
+                console.error('Error clearing drawings:', e);
+            }
+        }
+
+        // Toggle trading buttons
+        function toggleTradingButtons(hasPosition) {
+            const buyBtn = document.getElementById('buy-button');
+            const sellBtn = document.getElementById('sell-button');
+            const closeBtn = document.getElementById('close-position');
+
+            if (buyBtn) buyBtn.disabled = hasPosition;
+            if (sellBtn) sellBtn.disabled = hasPosition;
+            if (closeBtn) closeBtn.disabled = !hasPosition;
+        }
+
+        // Update position info display
+        function updatePositionInfo() {
+            const positionInfo = document.getElementById('position-info');
+            const positionType = document.getElementById('position-type');
+            const positionPrice = document.getElementById('position-price');
+
+            if (!positionInfo) return;
+
+            if (tradingState.inPosition) {
+                positionInfo.classList.add('active');
+                if (positionType) {
+                    positionType.textContent = tradingState.positionType;
+                    positionType.className = tradingState.positionType;
+                }
+                if (positionPrice) {
+                    positionPrice.textContent = '@' + tradingState.entryPrice.toFixed(2);
+                }
+            } else {
+                positionInfo.classList.remove('active');
+            }
+        }
+
+        // Clear position info
+        function clearPositionInfo() {
+            const positionInfo = document.getElementById('position-info');
+            if (positionInfo) {
+                positionInfo.classList.remove('active');
+            }
+        }
+
+        // Finish current replay session
+        async function finishCurrentReplaySession() {
+            if (tradingState.replaySessionId && tradingState.replayEndTime) {
+                try {
+                    await fetch(`/api/replay/sessions/${tradingState.replaySessionId}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            end_time: tradingState.replayEndTime
+                        })
+                    });
+                } catch(e) {
+                    console.error('Error finishing replay session:', e);
+                }
+            }
+
+            // Reset session ID for next replay
+            tradingState.replaySessionId = null;
+            tradingState.isFirstTrade = true;
+        }
+
+        // Save trade to database
+        async function saveTrade(tradeData) {
+            try {
+                const response = await fetch('/save-trade', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(tradeData)
+                });
+
+                const data = await response.json();
+                if (data.status === 'ok' && data.data && data.data.session_uuid) {
+                    // Update session ID if this was the first trade
+                    if (tradingState.isFirstTrade) {
+                        tradingState.replaySessionId = data.data.session_uuid;
+                    }
+                }
+                return data;
+            } catch(e) {
+                console.error('Error saving trade:', e);
+                return null;
+            }
+        }
+
+        // Update session market price
+        async function updateSessionMarketPrice(sessionId, price, priceType) {
+            try {
+                await fetch(`/api/replay/sessions/${sessionId}/market-price`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        price: price,
+                        price_type: priceType // 'start' or 'end'
+                    })
+                });
+            } catch(e) {
+                console.error('Error updating session market price:', e);
+            }
+        }
+
+        // Load trade statistics
+        async function loadTradeStatistics() {
+            try {
+                const symbol = window.widget ? window.widget.chart().symbol() : null;
+                const interval = window.widget ? window.widget.chart().resolution() : null;
+
+                let url = '/trade-statistics';
+                const params = [];
+                if (symbol) params.push(`symbol=${encodeURIComponent(symbol)}`);
+                if (interval) params.push(`interval=${encodeURIComponent(interval)}`);
+                if (params.length > 0) url += '?' + params.join('&');
+
+                const response = await fetch(url);
+                const data = await response.json();
+
+                if (data.status === 'ok' && data.data) {
+                    updateStatsDisplay(data.data);
+                }
+            } catch(e) {
+                console.error('Error loading trade statistics:', e);
+            }
+        }
+
+        // Update stats display
+        function updateStatsDisplay(stats) {
+            const elements = {
+                'total-trades': stats.total_trades || 0,
+                'profitable-trades': stats.profitable_trades || 0,
+                'win-rate': (stats.win_rate || 0) + '%',
+                'total-pnl': ((stats.total_pnl || 0) >= 0 ? '+' : '') + (stats.total_pnl || 0).toFixed(2),
+                'profit-rate': ((stats.profit_rate || 0) >= 0 ? '+' : '') + (stats.profit_rate || 0).toFixed(2) + '%'
+            };
+
+            for (const [id, value] of Object.entries(elements)) {
+                const element = document.getElementById(id);
+                if (element) {
+                    element.textContent = value;
+
+                    // Add color classes for P&L values
+                    if (id === 'total-pnl' || id === 'profit-rate') {
+                        const numValue = parseFloat(value);
+                        element.className = 'stats-value ' + (numValue >= 0 ? 'profit' : 'loss');
+                    }
+                }
+            }
+        }
+
+        // Load replay history
+        async function loadReplayHistory() {
+            try {
+                const response = await fetch('/api/replay/sessions?page_size=20');
+                const data = await response.json();
+
+                if (data.status === 'ok' && data.data) {
+                    displayReplayHistory(data.data);
+                }
+            } catch(e) {
+                console.error('Error loading replay history:', e);
+            }
+        }
+
+        // Display replay history
+        function displayReplayHistory(sessions) {
+            const historyList = document.getElementById('history-list');
+            const historyLoading = document.getElementById('history-loading');
+            const historyEmpty = document.getElementById('history-empty');
+
+            if (!historyList || !historyLoading || !historyEmpty) return;
+
+            // Hide loading
+            historyLoading.style.display = 'none';
+
+            if (sessions.length === 0) {
+                historyEmpty.style.display = 'block';
+                historyList.innerHTML = '';
+                return;
+            }
+
+            historyEmpty.style.display = 'none';
+
+            // Build history items HTML
+            const itemsHtml = sessions.map(session => {
+                const date = new Date(session.start_time * 1000).toLocaleDateString();
+                const pnl = session.total_pnl || 0;
+                const pnlClass = pnl >= 0 ? 'profit' : 'loss';
+                const pnlText = (pnl >= 0 ? '+' : '') + pnl.toFixed(2);
+
+                return `
+                    <div class="history-item" data-session-id="${session.session_uuid}">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <div style="font-weight: 600; color: #c9d1d9;">${session.symbol}</div>
+                                <div style="font-size: 12px; color: #8b949e;">${date} • ${session.interval} • ${session.trade_count || 0} trades</div>
+                            </div>
+                            <div style="text-align: right;">
+                                <div class="stats-value ${pnlClass}" style="font-size: 14px;">${pnlText}</div>
+                                <div style="font-size: 11px; color: #8b949e;">${session.bars_count} bars</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            historyList.innerHTML = itemsHtml;
+
+            // Add click handlers to load specific session
+            historyList.querySelectorAll('.history-item').forEach(item => {
+                item.onclick = function() {
+                    const sessionId = this.dataset.sessionId;
+                    loadReplaySession(sessionId);
+                };
+            });
+        }
+
+        // Load a specific replay session
+        async function loadReplaySession(sessionId) {
+            try {
+                const response = await fetch(`/api/replay/sessions/${sessionId}`);
+                const data = await response.json();
+
+                if (data.status === 'ok' && data.data) {
+                    const session = data.data;
+
+                    // Close history modal
+                    const modal = document.getElementById('history-modal');
+                    if (modal) modal.classList.remove('show');
+
+                    // Set chart to replay state
+                    if (window.widget && session.symbol && session.start_time) {
+                        const chart = window.widget.chart();
+
+                        // Change symbol if different
+                        if (chart.symbol() !== session.symbol) {
+                            chart.setSymbol(session.symbol);
+                        }
+
+                        // Set interval if different
+                        if (session.interval && chart.resolution() !== session.interval) {
+                            chart.setResolution(session.interval);
+                        }
+
+                        // Set chart range
+                        setChartRangeFromTimestamp(
+                            session.start_time,
+                            session.bars_count || 150,
+                            session.interval || '1D'
+                        );
+
+                        // Update trading state
+                        tradingState.replaySessionId = sessionId;
+                        tradingState.replayStartTime = session.start_time;
+                        tradingState.barsCount = session.bars_count || 150;
+                    }
+                }
+            } catch(e) {
+                console.error('Error loading replay session:', e);
+            }
+        }
+
+        function initTradingViewWidget() {
+            window.datafeed = new OKXDatafeed();
+
+            // Get symbol from URL params or default to BTC-USDT
+            const urlParams = new URLSearchParams(window.location.search);
+            const defaultSymbol = urlParams.get('symbol') || 'BTC-USDT';
+
+            window.tvWidget = window.widget = new TradingView.widget({
+                symbol: defaultSymbol,
+                interval: '1m',
+                container: 'chartContainer',
+                datafeed: window.datafeed,
+                library_path: 'charting_library/',
+                locale: 'en',
+                enabled_features: [
+                    'study_templates',
+                    'save_chart_properties_to_local_storage',
+                    'seconds_resolution',  // 启用秒级和分钟级分辨率
+                    'pre_post_market_sessions',
+                    'show_symbol_logos',
+                    'show_exchange_logos',
+                    'secondary_series_extend_time_scale',
+                    'show_percent_option_for_right_margin',
+                    'display_data_mode',
+                    'items_favoriting',
+                    'disable_resolution_rebuild',
+                    'pre_post_market_price_line',
+                    'show_object_tree',  // Enable object tree (left sidebar)
+                    'side_toolbar_in_fullscreen_mode'
+                ],
+                disabled_features: [
+                    'use_localstorage_for_settings',
+                    'volume_force_overlay',
+                    'create_volume_indicator_by_default'
+                ],
+                charts_storage_url: '/saveload.tradingview.com',
+                charts_storage_api_version: '1.1',
+                client_id: 'okx_tv_proxy',
+                user_id: 'okx_user',
+                fullscreen: true,
+                autosize: true,
+                theme: 'dark'
+            });
+        }
+
+        // Initialize when page loads
+        window.addEventListener('DOMContentLoaded', function() {
+            initTradingViewWidget();
+
+            // Wait for chart to be ready then add Replay button to toolbar
+            window.tvWidget.onChartReady(function() {
+                window.tvWidget.headerReady().then(() => {
+                    // Add Replay button to the chart toolbar
+                    const replayButton = window.tvWidget.createButton();
+                    replayButton.setAttribute('title', 'Replay');
+                    replayButton.innerHTML = '⏪ Replay';
+                    replayButton.addEventListener('click', function() {
+                        toggleReplayMenu();
+                    });
+                });
+            });
+
+            // Initialize drag functionality
+            initReplayMenuDrag();
+            // Initialize replay controls
+            initReplayControls();
+            // Initialize trading controls
+            initTradingControls();
+        });
+
+        // Toggle replay menu visibility
+        function toggleReplayMenu() {
+            const replayMenu = document.getElementById('replay-menu');
+            if (replayMenu) {
+                if (replayMenu.style.display === 'none' || !replayMenu.style.display) {
+                    replayMenu.style.display = 'flex';
+                } else {
+                    replayMenu.style.display = 'none';
+                    // Stop playback when closing menu
+                    stopPlayback();
+                }
+            }
+        }
+
+        // Initialize drag functionality for replay menu
+        function initReplayMenuDrag() {
+            const menu = document.getElementById('replay-menu');
+            if (!menu) return;
+
+            let isDragging = false;
+            let offsetX = 0, offsetY = 0;
+
+            function startDrag(e) {
+                if (e.target !== menu) return;
+                isDragging = true;
+                const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+                const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+                offsetX = clientX - menu.offsetLeft;
+                offsetY = clientY - menu.offsetTop;
+                menu.style.transition = 'none';
+                e.preventDefault();
+            }
+
+            function moveDrag(e) {
+                if (!isDragging) return;
+                const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+                const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+                menu.style.left = (clientX - offsetX) + 'px';
+                menu.style.top = (clientY - offsetY) + 'px';
+                menu.style.bottom = 'auto';
+                menu.style.right = 'auto';
+                e.preventDefault();
+            }
+
+            function endDrag() {
+                isDragging = false;
+                menu.style.transition = '';
+            }
+
+            menu.addEventListener('mousedown', startDrag);
+            menu.addEventListener('touchstart', startDrag, { passive: false });
+            document.addEventListener('mousemove', moveDrag);
+            document.addEventListener('touchmove', moveDrag, { passive: false });
+            document.addEventListener('mouseup', endDrag);
+            document.addEventListener('touchend', endDrag);
+        }
+
+        // Initialize replay controls
+        function initReplayControls() {
+            // Close button
+            const closeBtn = document.getElementById('replay-close');
+            if (closeBtn) {
+                closeBtn.onclick = async function() {
+                    await finishCurrentReplaySession();
+                    const menu = document.getElementById('replay-menu');
+                    if (menu) menu.style.display = 'none';
+                };
+            }
+
+            // Play/Pause buttons
+            const playBtn = document.getElementById('replay-play');
+            const pauseBtn = document.getElementById('replay-pause');
+            if (playBtn) {
+                playBtn.onclick = function() { startPlayback(); };
+            }
+            if (pauseBtn) {
+                pauseBtn.onclick = function() { stopPlayback(); };
+            }
+
+            // Next button
+            const nextBtn = document.getElementById('replay-next');
+            if (nextBtn) {
+                nextBtn.onclick = function() {
+                    const speedSel = document.getElementById('replay-speed');
+                    const speed = speedSel ? parseInt(speedSel.value) : 1;
+                    advanceChartRange(speed);
+                };
+            }
+
+            // Speed selector
+            const speedSel = document.getElementById('replay-speed');
+            if (speedSel) {
+                speedSel.onchange = function() {
+                    if (isPlaying) {
+                        stopPlayback();
+                        startPlayback();
+                    }
+                };
+            }
+
+            // Initialize mode selector dropdown
+            initModeSelector();
+        }
+
+        // Initialize mode selector dropdown
+        function initModeSelector() {
+            const modeContainer = document.getElementById('replay-mode-container');
+            const modeSelected = document.getElementById('replay-mode-selected');
+            const modeOptions = document.getElementById('replay-mode-options');
+            const modeText = document.getElementById('replay-mode-text');
+            const datetimePicker = document.getElementById('replay-datetime');
+
+            if (!modeContainer || !modeSelected || !modeOptions) return;
+
+            // Toggle dropdown
+            modeSelected.onclick = function(e) {
+                e.stopPropagation();
+                modeOptions.style.display = modeOptions.style.display === 'block' ? 'none' : 'block';
+            };
+
+            // Handle option selection
+            const options = modeOptions.querySelectorAll('.dropdown-option');
+            options.forEach(option => {
+                option.onclick = function(e) {
+                    e.stopPropagation();
+                    const value = this.dataset.value;
+                    const text = this.textContent;
+
+                    // Update selected text
+                    if (modeText) modeText.textContent = text;
+
+                    // Toggle datetime picker visibility
+                    if (value === 'custom') {
+                        if (datetimePicker) {
+                            datetimePicker.style.display = 'inline-block';
+                            // Set default datetime to 30 days ago
+                            const defaultDate = new Date();
+                            defaultDate.setDate(defaultDate.getDate() - 30);
+                            datetimePicker.value = defaultDate.toISOString().slice(0, 16);
+                        }
+                    } else {
+                        if (datetimePicker) datetimePicker.style.display = 'none';
+
+                        // If random mode selected, wait for chart to be ready then start random replay
+                        if (value === 'random') {
+                            // Ensure chart is ready before requesting replay
+                            if (window.widget) {
+                                // Wait a bit for chart to stabilize
+                                setTimeout(() => {
+                                    requestRandomReplayPoint();
+                                }, 500);
+                            } else {
+                                console.error('Chart widget not ready');
+                            }
+                        }
+                    }
+
+                    // Close dropdown
+                    modeOptions.style.display = 'none';
+                };
+            });
+
+            // Handle datetime picker change
+            if (datetimePicker) {
+                datetimePicker.onchange = function() {
+                    const selectedTime = new Date(this.value).getTime() / 1000;
+                    // Ensure chart is ready before starting replay
+                    if (window.widget) {
+                        setTimeout(() => {
+                            startReplayFromTime(selectedTime);
+                        }, 500);
+                    } else {
+                        console.error('Chart widget not ready');
+                    }
+                };
+            }
+
+            // Close dropdown when clicking outside
+            document.addEventListener('click', function(e) {
+                if (!modeContainer.contains(e.target)) {
+                    modeOptions.style.display = 'none';
+                }
+            });
+        }
+
+        // Request random replay point from OKX API
+        async function requestRandomReplayPoint() {
+            try {
+                // Stop current playback if running
+                stopPlayback();
+
+                // Wait for widget to be ready
+                if (!window.widget) {
+                    console.error('[requestRandomReplayPoint] Widget not ready');
+                    return;
+                }
+
+                const chart = window.widget.chart();
+
+                // Get current chart symbol and interval
+                let currentSymbol = chart.symbol() || 'BTC-USDT';
+                let currentInterval = chart.resolution() || '1D';
+
+                console.log('[requestRandomReplayPoint] Current chart state:', {
+                    symbol: currentSymbol,
+                    interval: currentInterval,
+                    barsCount: tradingState.barsCount
+                });
+
+                // Convert TradingView interval to server format
+                const serverInterval = convertIntervalForServer(currentInterval);
+
+                // Calculate expected time range for validation
+                const secondsPerBar = calculateSecondsPerBar(currentInterval);
+                const totalSeconds = tradingState.barsCount * secondsPerBar;
+                const totalDays = (totalSeconds / 86400).toFixed(2);
+
+                console.log('[requestRandomReplayPoint] Interval conversion:', {
+                    tvInterval: currentInterval,
+                    serverInterval: serverInterval,
+                    secondsPerBar: secondsPerBar,
+                    totalBars: tradingState.barsCount,
+                    totalSeconds: totalSeconds,
+                    totalDays: totalDays,
+                    readableTime: `${totalDays} days (${(totalSeconds / 3600).toFixed(1)} hours)`
+                });
+
+                // Use OKX-specific endpoint
+                const apiUrl = `/api/okx/replay/random?symbol=${currentSymbol}&interval=${serverInterval}&bars_count=${tradingState.barsCount}`;
+                console.log('[requestRandomReplayPoint] Fetching:', apiUrl);
+
+                const response = await fetch(apiUrl);
+                const data = await response.json();
+
+                if (data.status === 'ok' && data.data) {
+                    const { symbol, start_time, bars_count } = data.data;
+
+                    console.log('Received replay data:', {
+                        symbol,
+                        start_time,
+                        startDate: new Date(start_time * 1000).toISOString(),
+                        bars_count
+                    });
+
+                    // Update trading state
+                    tradingState.replayStartTime = start_time;
+                    tradingState.barsCount = bars_count;
+                    tradingState.originalInterval = currentInterval;
+
+                    // If symbol is different, change it first and wait for it to load
+                    if (symbol !== currentSymbol) {
+                        console.log('Changing symbol from', currentSymbol, 'to', symbol);
+
+                        // Set symbol and wait for it to load
+                        chart.setSymbol(symbol, () => {
+                            console.log('Symbol changed, now setting chart range');
+                            // After symbol is loaded, set the chart range
+                            setTimeout(() => {
+                                setChartRangeFromTimestamp(start_time, bars_count, currentInterval);
+                            }, 500);
+                        });
+                    } else {
+                        // Same symbol, just set the range
+                        setChartRangeFromTimestamp(start_time, bars_count, currentInterval);
+                    }
+                } else {
+                    console.error('Invalid response from replay endpoint:', data);
+                }
+            } catch (error) {
+                console.error('Error requesting random replay point:', error);
+            }
+        }
+
+        // Start replay from specific time
+        function startReplayFromTime(timestamp) {
+            try {
+                // Stop current playback if running
+                stopPlayback();
+
+                // Get current chart interval
+                let currentInterval = '1D';
+                if (window.widget) {
+                    const chart = window.widget.chart();
+                    currentInterval = chart.resolution();
+                }
+
+                // Update trading state
+                tradingState.replayStartTime = timestamp;
+                tradingState.originalInterval = currentInterval;
+
+                // Set chart range
+                setChartRangeFromTimestamp(timestamp, tradingState.barsCount, currentInterval);
+            } catch (error) {
+                console.error('Error starting replay from time:', error);
+            }
+        }
+
+        /**
+         * Set chart range from timestamp for replay
+         * @param {number} startTime - Replay start time in SECONDS (Unix timestamp)
+         * @param {number} barsCount - Total number of bars in replay session (e.g., 150)
+         * @param {string} interval - Chart interval (e.g., '1D', '1H', '5')
+         *
+         * Note:
+         * - All timestamps in this function use SECONDS, not milliseconds
+         * - TradingView's setVisibleRange() and getVisibleRange() both use SECONDS
+         * - Initial visible range shows 100 bars (99 before startTime, 1 after)
+         */
+        function setChartRangeFromTimestamp(startTime, barsCount, interval) {
+            if (!window.widget) {
+                console.error('[setChartRangeFromTimestamp] Widget not initialized');
+                return;
+            }
+
+            try {
+                const chart = window.widget.chart();
+
+                // Log interval calculation
+                console.log('[setChartRangeFromTimestamp] Input parameters:', {
+                    startTime,
+                    startDate: new Date(startTime * 1000).toISOString(),
+                    barsCount,
+                    interval
+                });
+
+                const secondsPerBar = calculateSecondsPerBar(interval);
+                console.log('[setChartRangeFromTimestamp] Calculated secondsPerBar:', {
+                    interval,
+                    secondsPerBar,
+                    totalDuration: `${barsCount} bars × ${secondsPerBar}s = ${barsCount * secondsPerBar}s (${((barsCount * secondsPerBar) / 86400).toFixed(2)} days)`
+                });
+
+                // Validate startTime (should be in seconds, ~10 digits)
+                startTime = Math.floor(Number(startTime));
+                if (isNaN(startTime) || startTime <= 0) {
+                    console.error('[setChartRangeFromTimestamp] Invalid start time:', startTime);
+                    return;
+                }
+
+                // Ensure startTime is in seconds, not milliseconds
+                if (startTime > 95617584000) {  // year 3000 in seconds
+                    console.warn('[setChartRangeFromTimestamp] startTime appears to be in milliseconds, converting to seconds');
+                    startTime = Math.floor(startTime / 1000);
+                }
+
+                // Calculate replay end time (startTime + barsCount bars)
+                const replayEndTime = startTime + (barsCount * secondsPerBar);
+
+                // Calculate initial visible range
+                // Show 100 bars: 99 bars before startTime, 1 bar after startTime
+                // This matches the index.html implementation
+                const visibleBarsBeforeStart = 99;
+                const visibleBarsAfterStart = 1;
+                const rangeFrom = startTime - (visibleBarsBeforeStart * secondsPerBar);
+                const rangeTo = startTime + (visibleBarsAfterStart * secondsPerBar);
+
+                console.log('[setChartRangeFromTimestamp] Setting up replay:', {
+                    startTime,
+                    startDate: new Date(startTime * 1000).toISOString(),
+                    replayEndTime,
+                    replayEndDate: new Date(replayEndTime * 1000).toISOString(),
+                    barsCount,
+                    interval,
+                    secondsPerBar,
+                    visibleRange: {
+                        from: rangeFrom,
+                        to: rangeTo,
+                        fromDate: new Date(rangeFrom * 1000).toISOString(),
+                        toDate: new Date(rangeTo * 1000).toISOString(),
+                        bars: visibleBarsBeforeStart + visibleBarsAfterStart
+                    }
+                });
+
+                // Update trading state (all in seconds)
+                tradingState.replayStartTime = startTime;
+                tradingState.replayEndTime = replayEndTime;
+                tradingState.barsCount = barsCount;
+                tradingState.currentBarTime = startTime;
+                tradingState.expectedVisibleRange = { from: rangeFrom, to: rangeTo };
+
+                // Set visible range (TradingView expects SECONDS)
+                chart.setVisibleRange({
+                    from: rangeFrom,
+                    to: rangeTo
+                }).then(() => {
+                    console.log('[setChartRangeFromTimestamp] Chart range set successfully');
+                    updateReplayStatus();
+
+                    // Clear any existing drawings
+                    clearAllDrawings();
+
+                    // Reset position state
+                    if (tradingState.inPosition) {
+                        tradingState.inPosition = false;
+                        tradingState.positionType = null;
+                        toggleTradingButtons(false);
+                        clearPositionInfo();
+                    }
+                }).catch(error => {
+                    console.error('[setChartRangeFromTimestamp] Error setting chart range:', error);
+                    console.error('[setChartRangeFromTimestamp] Range values (seconds):', { from: rangeFrom, to: rangeTo });
+                });
+            } catch (error) {
+                console.error('[setChartRangeFromTimestamp] Unexpected error:', error);
+            }
+        }
+
+        // Convert interval format for server
+        function convertIntervalForServer(tvInterval) {
+            const intervalMap = {
+                '1': '1m',
+                '3': '3m',
+                '5': '5m',
+                '15': '15m',
+                '30': '30m',
+                '60': '1H',
+                '120': '2H',
+                '240': '4H',
+                '360': '6H',
+                '720': '12H',
+                'D': '1D',
+                '1D': '1D',
+                'W': '1W',
+                '1W': '1W',
+                'M': '1M',
+                '1M': '1M'
+            };
+            return intervalMap[tvInterval] || '1D';
+        }
+
+        // Initialize trading controls
+        function initTradingControls() {
+            // Buy button
+            const buyBtn = document.getElementById('buy-button');
+            if (buyBtn) {
+                buyBtn.onclick = async function() {
+                    if (tradingState.inPosition) return;
+
+                    const investAmount = parseFloat(document.getElementById('invest-amount').value) || 100;
+                    const leverage = parseInt(document.getElementById('leverage-selector').value) || 1;
+                    const currentPrice = getCurrentPrice();
+
+                    if (!currentPrice) {
+                        console.error('Cannot get current price');
+                        return;
+                    }
+
+                    tradingState.inPosition = true;
+                    tradingState.positionType = 'buy';
+                    tradingState.entryPrice = currentPrice;
+                    tradingState.investAmount = investAmount;
+                    tradingState.leverage = leverage;
+                    tradingState.entryTime = tradingState.currentBarTime || Date.now() / 1000;
+
+                    // Record market price at start if first trade
+                    if (tradingState.isFirstTrade && tradingState.replaySessionId) {
+                        tradingState.marketPriceStart = currentPrice;
+                        await updateSessionMarketPrice(tradingState.replaySessionId, currentPrice, 'start');
+                    }
+
+                    toggleTradingButtons(true);
+                    updatePositionInfo();
+                    updateReplayStatus();
+                };
+            }
+
+            // Sell button
+            const sellBtn = document.getElementById('sell-button');
+            if (sellBtn) {
+                sellBtn.onclick = async function() {
+                    if (tradingState.inPosition) return;
+
+                    const investAmount = parseFloat(document.getElementById('invest-amount').value) || 100;
+                    const leverage = parseInt(document.getElementById('leverage-selector').value) || 1;
+                    const currentPrice = getCurrentPrice();
+
+                    if (!currentPrice) {
+                        console.error('Cannot get current price');
+                        return;
+                    }
+
+                    tradingState.inPosition = true;
+                    tradingState.positionType = 'sell';
+                    tradingState.entryPrice = currentPrice;
+                    tradingState.investAmount = investAmount;
+                    tradingState.leverage = leverage;
+                    tradingState.entryTime = tradingState.currentBarTime || Date.now() / 1000;
+
+                    // Record market price at start if first trade
+                    if (tradingState.isFirstTrade && tradingState.replaySessionId) {
+                        tradingState.marketPriceStart = currentPrice;
+                        await updateSessionMarketPrice(tradingState.replaySessionId, currentPrice, 'start');
+                    }
+
+                    toggleTradingButtons(true);
+                    updatePositionInfo();
+                    updateReplayStatus();
+                };
+            }
+
+            // Close position button
+            const closeBtn = document.getElementById('close-position');
+            if (closeBtn) {
+                closeBtn.onclick = async function() {
+                    if (!tradingState.inPosition) return;
+
+                    const currentPrice = getCurrentPrice();
+                    if (!currentPrice) {
+                        console.error('Cannot get current price');
+                        return;
+                    }
+
+                    const pnl = calculateCurrentPnL(currentPrice);
+                    const exitTime = tradingState.currentBarTime || Date.now() / 1000;
+
+                    // Save trade to database
+                    await saveTrade({
+                        symbol: window.widget ? window.widget.chart().symbol() : 'BTC-USDT',
+                        position_type: tradingState.positionType,
+                        entry_time: tradingState.entryTime,
+                        exit_time: exitTime,
+                        entry_price: tradingState.entryPrice,
+                        exit_price: currentPrice,
+                        quantity: tradingState.investAmount * tradingState.leverage / tradingState.entryPrice,
+                        leverage: tradingState.leverage,
+                        margin: tradingState.investAmount,
+                        pnl: pnl,
+                        timestamp: Date.now() / 1000,
+                        replay_session_id: tradingState.replaySessionId,
+                        is_first_trade: tradingState.isFirstTrade,
+                        interval: window.widget ? window.widget.chart().resolution() : '1D',
+                        bars_count: tradingState.barsCount
+                    });
+
+                    // Update account balance
+                    tradingState.accountBalance += pnl;
+                    tradingState.inPosition = false;
+                    tradingState.positionType = null;
+                    tradingState.isFirstTrade = false;
+
+                    toggleTradingButtons(false);
+                    clearPositionInfo();
+                    updateReplayStatus();
+                };
+            }
+
+            // Stats button
+            const statsBtn = document.getElementById('stats-button');
+            if (statsBtn) {
+                statsBtn.onclick = async function() {
+                    await loadTradeStatistics();
+                    const modal = document.getElementById('stats-modal');
+                    if (modal) modal.classList.add('show');
+                };
+            }
+
+            // Stats modal close
+            const statsCloseBtn = document.getElementById('stats-modal-close');
+            if (statsCloseBtn) {
+                statsCloseBtn.onclick = function() {
+                    const modal = document.getElementById('stats-modal');
+                    if (modal) modal.classList.remove('show');
+                };
+            }
+
+            // History button
+            const historyBtn = document.getElementById('history-button');
+            if (historyBtn) {
+                historyBtn.onclick = async function() {
+                    const modal = document.getElementById('history-modal');
+                    if (modal) {
+                        modal.classList.add('show');
+                        // Show loading state
+                        const historyLoading = document.getElementById('history-loading');
+                        const historyList = document.getElementById('history-list');
+                        const historyEmpty = document.getElementById('history-empty');
+                        if (historyLoading) historyLoading.style.display = 'block';
+                        if (historyList) historyList.innerHTML = '';
+                        if (historyEmpty) historyEmpty.style.display = 'none';
+
+                        // Load history data
+                        await loadReplayHistory();
+                    }
+                };
+            }
+
+            // History modal close
+            const historyCloseBtn = document.getElementById('history-modal-close');
+            if (historyCloseBtn) {
+                historyCloseBtn.onclick = function() {
+                    const modal = document.getElementById('history-modal');
+                    if (modal) modal.classList.remove('show');
+                };
+            }
+        }
+    </script>
+</head>
+
+<body>
+    <div id="chartContainer"></div>
+
+    <!-- Replay 浮动菜单 -->
+    <div id="replay-menu">
+        <div id="replay-mode-container" class="custom-dropdown" style="margin-right:6px;">
+            <div id="replay-mode-selected" class="dropdown-selected" title="选择模式">
+                <span id="replay-mode-text">🎲 随机K线</span>
+                <span class="dropdown-arrow">▼</span>
+            </div>
+            <div id="replay-mode-options" class="dropdown-options">
+                <div class="dropdown-option" data-value="random">🎲 随机K线</div>
+                <div class="dropdown-option" data-value="custom">⏰ 选择时间</div>
+            </div>
+        </div>
+        <input type="datetime-local" id="replay-datetime" style="display:none;margin-right:6px;">
+        <button id="replay-play" title="播放">▶️</button>
+        <button id="replay-pause" title="暂停" style="display:none;">⏸️</button>
+        <button id="replay-next" title="前进">⏭️</button>
+        <select id="replay-speed" title="倍速选择" style="margin:0 6px;">
+            <option value="1">1x</option>
+            <option value="2">2x</option>
+            <option value="5">5x</option>
+        </select>
+        <div class="replay-divider"></div>
+        <!-- 回放状态信息 -->
+        <div id="replay-status" class="replay-status">
+            <div id="remaining-bars" class="status-item" title="剩余K线数">
+                <span class="status-label">剩余:</span>
+                <span id="remaining-bars-value" class="status-value">--</span>
+            </div>
+            <div id="current-pnl" class="status-item" title="当前盈亏" style="display:none;">
+                <span class="status-label">盈亏:</span>
+                <span id="current-pnl-value" class="status-value">--</span>
+            </div>
+            <div id="account-balance" class="status-item" title="账户总览">
+                <span class="status-label">余额:</span>
+                <span id="account-balance-value" class="status-value">10000.00</span>
+            </div>
+        </div>
+        <div class="replay-divider"></div>
+        <!-- 交易控制区 -->
+        <div id="trading-controls">
+            <!-- 投入金额 -->
+            <div class="trade-input-group">
+                <label for="invest-amount">投入</label>
+                <input type="number" id="invest-amount" value="100">
+                <span>USDT</span>
+            </div>
+
+            <!-- 杠杆选择 -->
+            <div class="trade-input-group">
+                <label for="leverage-selector">杠杆</label>
+                <select id="leverage-selector">
+                    <option value="1">1x</option>
+                    <option value="5">5x</option>
+                    <option value="10">10x</option>
+                    <option value="20">20x</option>
+                    <option value="50">50x</option>
+                    <option value="100">100x</option>
+                </select>
+            </div>
+
+            <button id="buy-button" class="trade-button buy">买入</button>
+            <button id="sell-button" class="trade-button sell">卖出</button>
+            <button id="close-position" class="trade-button close" disabled>平仓</button>
+            <div id="position-info" class="position-info">
+                <span id="position-type"></span>
+                <span id="position-price"></span>
+            </div>
+        </div>
+        <div class="replay-divider"></div>
+        <button id="stats-button" class="trade-button stats" title="交易统计">总览</button>
+        <button id="history-button" class="trade-button history" title="历史记录">历史</button>
+        <button id="restore-interval" class="trade-button restore" title="恢复原始周期" style="display:none;">恢复周期</button>
+        <button id="replay-close" title="关闭">❌</button>
+    </div>
+
+    <!-- 统计信息弹窗 -->
+    <div id="stats-modal" class="stats-modal">
+        <div class="stats-modal-header">
+            <div class="stats-modal-title">交易统计</div>
+            <button id="stats-modal-close" class="stats-modal-close">&times;</button>
+        </div>
+        <div class="stats-content">
+            <div class="stats-item">
+                <span class="stats-label">总交易数:</span>
+                <span id="total-trades" class="stats-value">0</span>
+            </div>
+            <div class="stats-item">
+                <span class="stats-label">盈利交易:</span>
+                <span id="profitable-trades" class="stats-value">0</span>
+            </div>
+            <div class="stats-item">
+                <span class="stats-label">成功率:</span>
+                <span id="win-rate" class="stats-value">0%</span>
+            </div>
+            <div class="stats-item">
+                <span class="stats-label">总盈亏:</span>
+                <span id="total-pnl" class="stats-value">0.00</span>
+            </div>
+            <div class="stats-item">
+                <span class="stats-label">盈利率:</span>
+                <span id="profit-rate" class="stats-value">0.00%</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 历史回放记录弹窗 -->
+    <div id="history-modal" class="modal-container">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="modal-title">回放历史记录</div>
+                <button id="history-modal-close" class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="history-list" class="history-list">
+                    <!-- 历史记录列表将通过JS动态加载 -->
+                </div>
+                <div id="history-loading" class="history-loading">
+                    <div class="loading-spinner"></div>
+                    <div>加载中...</div>
+                </div>
+                <div id="history-empty" class="history-empty" style="display:none;">
+                    暂无历史回放记录
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>

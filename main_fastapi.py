@@ -26,6 +26,10 @@ from typing import Optional, Dict, Any
 from pydantic import BaseModel
 import base64
 
+# Import OKX modules
+from okx_service import OKXService
+from okx_routes import create_okx_router
+
 # Load environment variables from .env file if it exists
 load_dotenv()
 
@@ -66,6 +70,8 @@ socket_app = socketio.ASGIApp(sio, app)
 # WebSocket connections tracker
 active_connections = {}
 
+# OKX Service will be initialized after DB setup
+
 # Configuration from environment variables
 REPLAY_BARS_COUNT = int(os.environ.get('REPLAY_BARS_COUNT', '150'))
 REPLAY_SYMBOLS = os.environ.get('REPLAY_SYMBOLS', 'BATS_DLY:AAPL,BATS_DLY:AAPL').split(',')
@@ -81,6 +87,14 @@ DB_CONFIG = {
     "dbname": os.environ.get("DB_NAME"),
     "user": os.environ.get("DB_USER"),
     "password": os.environ.get("DB_PASSWORD")
+}
+
+# OKX API configuration
+OKX_CONFIG = {
+    "api_key": os.environ.get("OKX_API_KEY", ""),
+    "secret_key": os.environ.get("OKX_SECRET_KEY", ""),
+    "passphrase": os.environ.get("OKX_PASSPHRASE", ""),
+    "flag": os.environ.get("OKX_FLAG", "0")  # 0: live, 1: demo
 }
 
 def get_db_connection():
@@ -190,6 +204,13 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+# Initialize OKX service
+okx_service = OKXService(DB_CONFIG, OKX_CONFIG)
+
+# Register OKX router
+okx_router = create_okx_router(okx_service)
+app.include_router(okx_router)
 
 # Base URLs for TradingView resources
 DOMAIN_MAPPINGS = {
@@ -307,6 +328,94 @@ def init_db():
         timestamp BIGINT NOT NULL
     )
     ''')
+
+    # OKX K线数据缓存表
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS okx_klines (
+        id SERIAL PRIMARY KEY,
+        symbol VARCHAR(50) NOT NULL,
+        interval VARCHAR(10) NOT NULL,
+        open_time BIGINT NOT NULL,
+        close_time BIGINT NOT NULL,
+        open_price DECIMAL(20,8) NOT NULL,
+        high_price DECIMAL(20,8) NOT NULL,
+        low_price DECIMAL(20,8) NOT NULL,
+        close_price DECIMAL(20,8) NOT NULL,
+        volume DECIMAL(20,8) NOT NULL,
+        volume_currency DECIMAL(20,8),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(symbol, interval, open_time)
+    )
+    ''')
+
+    # OKX 深度数据缓存表
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS okx_orderbook (
+        id SERIAL PRIMARY KEY,
+        symbol VARCHAR(50) NOT NULL,
+        timestamp BIGINT NOT NULL,
+        bids JSONB NOT NULL,
+        asks JSONB NOT NULL,
+        checksum INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(symbol, timestamp)
+    )
+    ''')
+
+    # OKX 成交记录缓存表
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS okx_trades (
+        id SERIAL PRIMARY KEY,
+        symbol VARCHAR(50) NOT NULL,
+        trade_id VARCHAR(50) NOT NULL,
+        price DECIMAL(20,8) NOT NULL,
+        size DECIMAL(20,8) NOT NULL,
+        side VARCHAR(10) NOT NULL,
+        timestamp BIGINT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(symbol, trade_id)
+    )
+    ''')
+
+    # OKX API请求记录表（速率限制管理）
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS okx_api_requests (
+        id SERIAL PRIMARY KEY,
+        endpoint VARCHAR(200) NOT NULL,
+        method VARCHAR(10) NOT NULL DEFAULT 'GET',
+        request_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        response_status INTEGER,
+        rate_limit_remaining INTEGER,
+        rate_limit_reset TIMESTAMP,
+        response_time_ms INTEGER
+    )
+    ''')
+
+    # 创建索引优化查询性能
+    cursor.execute('''
+    CREATE INDEX IF NOT EXISTS idx_klines_symbol_interval_time 
+    ON okx_klines(symbol, interval, open_time DESC)
+    ''')
+    
+    cursor.execute('''
+    CREATE INDEX IF NOT EXISTS idx_klines_time ON okx_klines(open_time DESC)
+    ''')
+    
+    cursor.execute('''
+    CREATE INDEX IF NOT EXISTS idx_orderbook_symbol_time 
+    ON okx_orderbook(symbol, timestamp DESC)
+    ''')
+    
+    cursor.execute('''
+    CREATE INDEX IF NOT EXISTS idx_trades_symbol_time 
+    ON okx_trades(symbol, timestamp DESC)
+    ''')
+    
+    cursor.execute('''
+    CREATE INDEX IF NOT EXISTS idx_api_requests_endpoint_time 
+    ON okx_api_requests(endpoint, request_time)
+    ''')
     
     conn.commit()
     conn.close()
@@ -325,6 +434,10 @@ async def home(request: Request):
 @app.get("/platform", response_class=HTMLResponse)
 async def platform(request: Request):
     return templates.TemplateResponse("platform.html", {"request": request, "title": "TV Proxy"})
+
+@app.get("/okx", response_class=HTMLResponse)
+async def okx_page(request: Request):
+    return templates.TemplateResponse("okx.html", {"request": request, "title": "OKX Data Source - Advanced Charts"})
 
 # Handle favicon.ico requests
 @app.get("/favicon.ico")
@@ -389,30 +502,30 @@ async def get_random_replay_point(
         # Validate bars_count
         if bars_count is None or bars_count <= 0:
             bars_count = REPLAY_BARS_COUNT
-        
+
         # interval转秒数
         interval_seconds = interval_to_seconds(interval)
-        
+
         # 没有指定symbol则随机
         if not symbol:
             import random
             symbol = random.choice(REPLAY_SYMBOLS)
-        
+
         current_time = int(time.time())
-        
+
         # 计算最早和最晚的起始时间
         earliest_time = REPLAY_EARLIEST_TIMESTAMP
         latest_time = current_time - (bars_count * interval_seconds)
         if latest_time < earliest_time:
             latest_time = earliest_time
-        
+
         # 随机选取
         if earliest_time >= latest_time:
             random_start_time = earliest_time
         else:
             import random
             random_start_time = random.randint(earliest_time, latest_time)
-        
+
         return {
             'status': 'ok',
             'data': {
@@ -1257,7 +1370,29 @@ async def proxy_broker_sample(resource_path: str):
     full_path = f"broker-sample/{resource_path}"
     return await proxy_tradingview_resource(domain, full_path)
 
-# Generic proxy route - MUST come LAST to avoid conflicting with specific routes
+# Specific routes for TradingView domains to prevent them from hitting the generic route
+@app.get("/trading-terminal.tradingview-widget.com/{resource_path:path}")
+async def proxy_trading_terminal(resource_path: str):
+    """Handler for trading-terminal.tradingview-widget.com resources"""
+    return await proxy_tradingview_resource("trading-terminal.tradingview-widget.com", resource_path)
+
+@app.get("/demo-feed-data.tradingview.com/{resource_path:path}")
+async def proxy_demo_feed(resource_path: str):
+    """Handler for demo-feed-data.tradingview.com resources"""
+    return await proxy_tradingview_resource("demo-feed-data.tradingview.com", resource_path)
+
+@app.get("/www.tradingview.com/{resource_path:path}")
+async def proxy_www_tradingview(resource_path: str):
+    """Handler for www.tradingview.com resources"""
+    return await proxy_tradingview_resource("www.tradingview.com", resource_path)
+
+# Generic proxy route for TradingView domains only - prefix with /tv-proxy/ to avoid conflicts
+@app.get("/tv-proxy/{domain}/{resource_path:path}")
+async def proxy_tradingview_resource_prefixed(domain: str, resource_path: str):
+    """Proxy handler with explicit prefix to avoid conflicts with API routes"""
+    return await proxy_tradingview_resource(domain, resource_path)
+
+# Legacy generic proxy route - MUST come LAST and should exclude common prefixes
 @app.get("/{domain}/{resource_path:path}")
 async def proxy_tradingview_resource(domain: str, resource_path: str):
     """
@@ -1265,10 +1400,15 @@ async def proxy_tradingview_resource(domain: str, resource_path: str):
     If the resource exists locally, serve it from the local cache.
     Otherwise, download it from TradingView website and cache it for future use.
     """
+    # Skip API routes and other non-proxy paths
+    if domain in ["api", "static", "templates", "snapshots", "saveload.tradingview.com"]:
+        logger.error(f"Non-proxy route incorrectly routed to proxy handler: /{domain}/{resource_path}")
+        raise HTTPException(status_code=404, detail=f"Invalid request. The path /{domain}/{resource_path} is not a valid proxy route.")
+
     # Ensure the resource path is sanitized to prevent directory traversal
     if ".." in resource_path:
         raise HTTPException(status_code=400, detail="Invalid resource path")
-    
+
     # Check if this is a valid domain we can proxy
     if domain not in DOMAIN_MAPPINGS:
         logger.error(f"Unknown domain: {domain}")

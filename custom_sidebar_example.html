@@ -1,0 +1,456 @@
+<!DOCTYPE HTML>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,minimum-scale=1.0">
+    <title>TradingView with Custom Left Sidebar</title>
+
+    <!-- TradingView Charting Library -->
+    <script src="charting_library/charting_library.standalone.js"></script>
+
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1e222d;
+            color: #d1d4dc;
+        }
+
+        #chartContainer {
+            height: 100vh;
+            width: 100vw;
+        }
+    </style>
+
+    <script>
+        // Custom Widget Extension with Left Sidebar
+        class CustomLeftSidebarWidget {
+            constructor(tvWidget) {
+                this.tvWidget = tvWidget;
+                this.initialize();
+            }
+
+            initialize() {
+                // Wait for widget to be ready
+                this.tvWidget.onChartReady(() => {
+                    console.log('Chart is ready, initializing custom sidebar');
+
+                    // Method 1: Using Widget Constructor API
+                    this.setupCustomPanels();
+
+                    // Method 2: Using Custom CSS Panel
+                    this.injectCustomPanel();
+
+                    // Method 3: Using Widget Methods
+                    this.setupCustomButtons();
+                });
+            }
+
+            // Method 1: Configure panels in widget initialization
+            setupCustomPanels() {
+                // This requires configuration during widget initialization
+                // See the widget configuration below
+            }
+
+            // Method 2: Inject custom HTML panel
+            injectCustomPanel() {
+                // Create custom panel HTML
+                const customPanelHTML = `
+                    <div id="custom-left-panel" style="
+                        position: absolute;
+                        left: 0;
+                        top: 40px;
+                        width: 300px;
+                        height: calc(100% - 40px);
+                        background: #1c2030;
+                        border-right: 1px solid #2a2e39;
+                        z-index: 110;
+                        display: none;
+                        overflow-y: auto;
+                    ">
+                        <div style="padding: 15px;">
+                            <h3 style="margin: 0 0 15px 0; font-size: 16px; color: #d1d4dc;">
+                                Custom Tools Panel
+                            </h3>
+
+                            <!-- Tab Navigation -->
+                            <div class="custom-tabs" style="
+                                display: flex;
+                                border-bottom: 1px solid #2a2e39;
+                                margin-bottom: 15px;
+                            ">
+                                <button onclick="switchTab('analysis')" class="tab-btn active" style="
+                                    flex: 1;
+                                    padding: 10px;
+                                    background: transparent;
+                                    border: none;
+                                    color: #d1d4dc;
+                                    cursor: pointer;
+                                    border-bottom: 2px solid #2962ff;
+                                ">Analysis</button>
+                                <button onclick="switchTab('trading')" class="tab-btn" style="
+                                    flex: 1;
+                                    padding: 10px;
+                                    background: transparent;
+                                    border: none;
+                                    color: #787b86;
+                                    cursor: pointer;
+                                    border-bottom: 2px solid transparent;
+                                ">Trading</button>
+                                <button onclick="switchTab('notes')" class="tab-btn" style="
+                                    flex: 1;
+                                    padding: 10px;
+                                    background: transparent;
+                                    border: none;
+                                    color: #787b86;
+                                    cursor: pointer;
+                                    border-bottom: 2px solid transparent;
+                                ">Notes</button>
+                            </div>
+
+                            <!-- Tab Contents -->
+                            <div id="tab-analysis" class="tab-content">
+                                <div style="padding: 10px; background: #131722; border-radius: 4px; margin-bottom: 10px;">
+                                    <h4 style="margin: 0 0 10px 0; font-size: 14px;">Market Sentiment</h4>
+                                    <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                                        <span>Bullish</span>
+                                        <span style="color: #26a69a;">65%</span>
+                                    </div>
+                                    <div style="display: flex; justify-content: space-between;">
+                                        <span>Bearish</span>
+                                        <span style="color: #ef5350;">35%</span>
+                                    </div>
+                                </div>
+
+                                <div style="padding: 10px; background: #131722; border-radius: 4px; margin-bottom: 10px;">
+                                    <h4 style="margin: 0 0 10px 0; font-size: 14px;">Technical Indicators</h4>
+                                    <div style="margin-bottom: 8px;">
+                                        <div style="display: flex; justify-content: space-between; margin-bottom: 3px;">
+                                            <span style="font-size: 13px;">RSI (14)</span>
+                                            <span style="font-size: 13px; color: #ffa726;">57.3</span>
+                                        </div>
+                                        <div style="display: flex; justify-content: space-between; margin-bottom: 3px;">
+                                            <span style="font-size: 13px;">MACD</span>
+                                            <span style="font-size: 13px; color: #26a69a;">Bullish</span>
+                                        </div>
+                                        <div style="display: flex; justify-content: space-between;">
+                                            <span style="font-size: 13px;">Moving Avg</span>
+                                            <span style="font-size: 13px; color: #26a69a;">Above</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div style="padding: 10px; background: #131722; border-radius: 4px;">
+                                    <h4 style="margin: 0 0 10px 0; font-size: 14px;">Support & Resistance</h4>
+                                    <div style="font-size: 13px;">
+                                        <div style="margin-bottom: 5px;">
+                                            <span style="color: #787b86;">R2:</span> <span>45,500</span>
+                                        </div>
+                                        <div style="margin-bottom: 5px;">
+                                            <span style="color: #ef5350;">R1:</span> <span>44,200</span>
+                                        </div>
+                                        <div style="margin-bottom: 5px;">
+                                            <span style="color: #ffa726;">Current:</span> <span>43,150</span>
+                                        </div>
+                                        <div style="margin-bottom: 5px;">
+                                            <span style="color: #26a69a;">S1:</span> <span>42,800</span>
+                                        </div>
+                                        <div>
+                                            <span style="color: #787b86;">S2:</span> <span>41,500</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div id="tab-trading" class="tab-content" style="display: none;">
+                                <div style="padding: 10px; background: #131722; border-radius: 4px; margin-bottom: 10px;">
+                                    <h4 style="margin: 0 0 10px 0; font-size: 14px;">Quick Trade</h4>
+                                    <div style="margin-bottom: 10px;">
+                                        <label style="display: block; margin-bottom: 5px; font-size: 12px; color: #787b86;">Type</label>
+                                        <select style="width: 100%; padding: 8px; background: #1c2030; border: 1px solid #2a2e39; color: #d1d4dc; border-radius: 4px;">
+                                            <option>Market Order</option>
+                                            <option>Limit Order</option>
+                                            <option>Stop Loss</option>
+                                        </select>
+                                    </div>
+                                    <div style="margin-bottom: 10px;">
+                                        <label style="display: block; margin-bottom: 5px; font-size: 12px; color: #787b86;">Quantity</label>
+                                        <input type="number" placeholder="0.00" style="width: 100%; padding: 8px; background: #1c2030; border: 1px solid #2a2e39; color: #d1d4dc; border-radius: 4px;">
+                                    </div>
+                                    <div style="margin-bottom: 10px;">
+                                        <label style="display: block; margin-bottom: 5px; font-size: 12px; color: #787b86;">Price</label>
+                                        <input type="number" placeholder="0.00" style="width: 100%; padding: 8px; background: #1c2030; border: 1px solid #2a2e39; color: #d1d4dc; border-radius: 4px;">
+                                    </div>
+                                    <div style="display: flex; gap: 10px;">
+                                        <button style="flex: 1; padding: 10px; background: #26a69a; border: none; color: white; border-radius: 4px; cursor: pointer;">Buy</button>
+                                        <button style="flex: 1; padding: 10px; background: #ef5350; border: none; color: white; border-radius: 4px; cursor: pointer;">Sell</button>
+                                    </div>
+                                </div>
+
+                                <div style="padding: 10px; background: #131722; border-radius: 4px;">
+                                    <h4 style="margin: 0 0 10px 0; font-size: 14px;">Open Positions</h4>
+                                    <div style="font-size: 12px; color: #787b86; text-align: center; padding: 20px;">
+                                        No open positions
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div id="tab-notes" class="tab-content" style="display: none;">
+                                <div style="padding: 10px; background: #131722; border-radius: 4px;">
+                                    <h4 style="margin: 0 0 10px 0; font-size: 14px;">Trading Notes</h4>
+                                    <textarea placeholder="Add your notes here..." style="
+                                        width: 100%;
+                                        min-height: 200px;
+                                        padding: 10px;
+                                        background: #1c2030;
+                                        border: 1px solid #2a2e39;
+                                        color: #d1d4dc;
+                                        border-radius: 4px;
+                                        resize: vertical;
+                                    "></textarea>
+                                    <button style="
+                                        margin-top: 10px;
+                                        padding: 8px 16px;
+                                        background: #2962ff;
+                                        border: none;
+                                        color: white;
+                                        border-radius: 4px;
+                                        cursor: pointer;
+                                    ">Save Note</button>
+                                </div>
+
+                                <div style="margin-top: 15px; padding: 10px; background: #131722; border-radius: 4px;">
+                                    <h4 style="margin: 0 0 10px 0; font-size: 14px;">Recent Notes</h4>
+                                    <div style="font-size: 12px; color: #787b86; text-align: center; padding: 20px;">
+                                        No notes yet
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+
+                // Wait a bit for the chart to fully render
+                setTimeout(() => {
+                    // Inject the panel into the page
+                    const chartContainer = document.getElementById('chartContainer');
+                    chartContainer.insertAdjacentHTML('beforeend', customPanelHTML);
+
+                    // Add toggle button to chart toolbar
+                    this.addToggleButton();
+                }, 1000);
+            }
+
+            // Add toggle button for the custom panel
+            addToggleButton() {
+                // Create toggle button
+                const toggleButton = this.tvWidget.createButton();
+                toggleButton.setAttribute('title', 'Toggle Custom Panel');
+                toggleButton.textContent = '☰';
+                toggleButton.addEventListener('click', () => {
+                    const panel = document.getElementById('custom-left-panel');
+                    if (panel) {
+                        if (panel.style.display === 'none') {
+                            panel.style.display = 'block';
+                            // Adjust chart margin
+                            const iframe = document.querySelector('#chartContainer iframe');
+                            if (iframe) {
+                                iframe.style.marginLeft = '300px';
+                                iframe.style.width = 'calc(100% - 300px)';
+                            }
+                        } else {
+                            panel.style.display = 'none';
+                            // Reset chart margin
+                            const iframe = document.querySelector('#chartContainer iframe');
+                            if (iframe) {
+                                iframe.style.marginLeft = '0';
+                                iframe.style.width = '100%';
+                            }
+                        }
+                    }
+                });
+            }
+
+            // Method 3: Setup custom buttons and actions
+            setupCustomButtons() {
+                // Add custom action buttons
+                const actionsButton = this.tvWidget.createButton();
+                actionsButton.setAttribute('title', 'Custom Actions');
+                actionsButton.textContent = '⚡';
+                actionsButton.addEventListener('click', () => {
+                    this.showCustomActionsMenu();
+                });
+            }
+
+            showCustomActionsMenu() {
+                // You can implement a dropdown menu here
+                console.log('Showing custom actions menu');
+            }
+        }
+
+        // Tab switching function
+        window.switchTab = function(tabName) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.style.display = 'none';
+            });
+
+            // Remove active class from all buttons
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.style.color = '#787b86';
+                btn.style.borderBottom = '2px solid transparent';
+            });
+
+            // Show selected tab
+            const selectedTab = document.getElementById(`tab-${tabName}`);
+            if (selectedTab) {
+                selectedTab.style.display = 'block';
+            }
+
+            // Highlight active button
+            event.target.style.color = '#d1d4dc';
+            event.target.style.borderBottom = '2px solid #2962ff';
+        }
+
+        // Simple datafeed for demonstration
+        const simpleFeed = {
+            onReady: (callback) => {
+                setTimeout(() => callback({
+                    supported_resolutions: ['1', '5', '15', '30', '60', '1D'],
+                    exchanges: [{ value: 'DEMO', name: 'Demo Exchange', desc: 'Demo Exchange' }],
+                    symbols_types: [{ name: 'crypto', value: 'crypto' }]
+                }), 0);
+            },
+            searchSymbols: (userInput, exchange, symbolType, onResultReadyCallback) => {
+                onResultReadyCallback([]);
+            },
+            resolveSymbol: (symbolName, onSymbolResolvedCallback, onResolveErrorCallback) => {
+                setTimeout(() => onSymbolResolvedCallback({
+                    name: symbolName,
+                    ticker: symbolName,
+                    description: symbolName,
+                    type: 'crypto',
+                    session: '24x7',
+                    timezone: 'Etc/UTC',
+                    minmov: 1,
+                    pricescale: 100,
+                    has_intraday: true,
+                    supported_resolutions: ['1', '5', '15', '30', '60', '1D'],
+                    volume_precision: 8,
+                    data_status: 'streaming'
+                }), 0);
+            },
+            getBars: (symbolInfo, resolution, periodParams, onHistoryCallback, onErrorCallback) => {
+                const bars = [];
+                const to = periodParams.to || Math.floor(Date.now() / 1000);
+                const from = periodParams.from || to - 86400 * 30;
+
+                // Generate dummy data
+                for (let i = from; i < to; i += 3600) {
+                    const basePrice = 40000 + Math.random() * 5000;
+                    bars.push({
+                        time: i * 1000,
+                        open: basePrice,
+                        high: basePrice + Math.random() * 100,
+                        low: basePrice - Math.random() * 100,
+                        close: basePrice + (Math.random() - 0.5) * 200,
+                        volume: Math.random() * 1000
+                    });
+                }
+
+                onHistoryCallback(bars, { noData: false });
+            },
+            subscribeBars: (symbolInfo, resolution, onRealtimeCallback, subscriberUID, onResetCacheNeededCallback) => {
+                console.log('Subscribe to bars');
+            },
+            unsubscribeBars: (subscriberUID) => {
+                console.log('Unsubscribe from bars');
+            }
+        };
+
+        function initTradingViewWidget() {
+            // Widget configuration with custom features
+            const widgetOptions = {
+                symbol: 'BTC/USDT',
+                interval: '1D',
+                container: 'chartContainer',
+                datafeed: simpleFeed,
+                library_path: 'charting_library/',
+                locale: 'en',
+                fullscreen: true,
+                autosize: true,
+                theme: 'dark',
+
+                // Enable features for customization
+                enabled_features: [
+                    'study_templates',
+                    'use_localstorage_for_settings',
+                    'save_chart_properties_to_local_storage',
+                    'side_toolbar_in_fullscreen_mode',
+                    'header_in_fullscreen_mode',
+                    'items_favoriting',
+                    'save_shortcut',
+                    'show_object_tree',  // This enables the Object Tree
+                    'property_pages',
+                    'show_chart_property_page',
+                    'support_multicharts',
+                    'show_dialog_on_snapshot_ready'
+                ],
+
+                // Disable features you don't need
+                disabled_features: [
+                    'volume_force_overlay',
+                    'create_volume_indicator_by_default'
+                ],
+
+                // Configure toolbar
+                toolbar_bg: '#1c2030',
+
+                // Configure loading screen
+                loading_screen: {
+                    backgroundColor: "#1c2030",
+                    foregroundColor: "#2962ff"
+                },
+
+                // Configure overrides
+                overrides: {
+                    "paneProperties.background": "#1c2030",
+                    "paneProperties.vertGridProperties.color": "#2a2e39",
+                    "paneProperties.horzGridProperties.color": "#2a2e39",
+                    "scalesProperties.textColor": "#d1d4dc"
+                },
+
+                // Studies overrides
+                studies_overrides: {
+                    "volume.volume.color.0": "#ef5350",
+                    "volume.volume.color.1": "#26a69a",
+                },
+
+                // Custom CSS for further styling
+                custom_css_url: '../custom_tv_styles.css',
+
+                // Widget constructor callback
+                widgetbar_width: 300  // This would be for a right sidebar
+            };
+
+            window.tvWidget = new TradingView.widget(widgetOptions);
+
+            // Initialize custom sidebar after widget is created
+            const customSidebar = new CustomLeftSidebarWidget(window.tvWidget);
+        }
+
+        // Initialize when page loads
+        window.addEventListener('DOMContentLoaded', function() {
+            initTradingViewWidget();
+        });
+    </script>
+</head>
+
+<body>
+    <div id="chartContainer"></div>
+</body>
+
+</html>
