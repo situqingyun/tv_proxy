@@ -525,6 +525,7 @@
         class OKXDatafeed {
             constructor() {
                 this.baseUrl = window.location.origin;
+                this.realtimeIntervals = new Map();  // 存储每个订阅的定时器: UID -> timer ID
                 // TradingView 期望的格式：分钟用数字，天/周/月用字母
                 this.supportedResolutions = ['1', '3', '5', '15', '30', '60', '120', '240', '360', '720', 'D', 'W', 'M'];
                 this.configurationData = {
@@ -803,22 +804,65 @@
                 }
                 // --- 结束调试日志 ---
 
-                // Convert resolution to OKX format
-                let okxInterval = resolution;
-                if (resolution === '1') okxInterval = '1m';
-                else if (resolution === '3') okxInterval = '3m';
-                else if (resolution === '5') okxInterval = '5m';
-                else if (resolution === '15') okxInterval = '15m';
-                else if (resolution === '30') okxInterval = '30m';
-                else if (resolution === '60') okxInterval = '1H';
-                else if (resolution === '120') okxInterval = '2H';
-                else if (resolution === '240') okxInterval = '4H';
-                else if (resolution === '360') okxInterval = '6H';
-                else if (resolution === '720') okxInterval = '12H';
-                else if (resolution === '1D' || resolution === 'D') okxInterval = '1D';
-                else if (resolution === '1W' || resolution === 'W') okxInterval = '1W';
-                else if (resolution === '1M' || resolution === 'M') okxInterval = '1M';
-                else okxInterval = '1H'; // Default fallback
+                // Convert resolution to OKX format - handle both TradingView and OKX formats
+                let okxInterval;
+                switch(resolution) {
+                    case '1':
+                    case '1m':
+                        okxInterval = '1m';
+                        break;
+                    case '3':
+                    case '3m':
+                        okxInterval = '3m';
+                        break;
+                    case '5':
+                    case '5m':
+                        okxInterval = '5m';
+                        break;
+                    case '15':
+                    case '15m':
+                        okxInterval = '15m';
+                        break;
+                    case '30':
+                    case '30m':
+                        okxInterval = '30m';
+                        break;
+                    case '60':
+                    case '1H':
+                        okxInterval = '1H';
+                        break;
+                    case '120':
+                    case '2H':
+                        okxInterval = '2H';
+                        break;
+                    case '240':
+                    case '4H':
+                        okxInterval = '4H';
+                        break;
+                    case '360':
+                    case '6H':
+                        okxInterval = '6H';
+                        break;
+                    case '720':
+                    case '12H':
+                        okxInterval = '12H';
+                        break;
+                    case '1D':
+                    case 'D':
+                        okxInterval = '1D';
+                        break;
+                    case '1W':
+                    case 'W':
+                        okxInterval = '1W';
+                        break;
+                    case '1M':
+                    case 'M':
+                        okxInterval = '1M';
+                        break;
+                    default:
+                        console.warn('[OKXDatafeed] Unknown resolution in getBars:', resolution, 'defaulting to 1H');
+                        okxInterval = '1H'; // Default fallback
+                }
 
                 // Build query parameters
                 const params = new URLSearchParams({
@@ -911,58 +955,210 @@
             }
 
             subscribeBars(symbolInfo, resolution, onRealtimeCallback, subscriberUID, onResetCacheNeededCallback) {
-                console.log('[OKXDatafeed] subscribeBars:', symbolInfo.name, resolution);
+                console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+                console.log('[OKXDatafeed] subscribeBars CALLED');
+                console.log('[OKXDatafeed] - Symbol:', symbolInfo.name);
+                console.log('[OKXDatafeed] - Resolution:', resolution);
+                console.log('[OKXDatafeed] - replayMode:', replayMode);
+                console.log('[OKXDatafeed] - subscriberUID:', subscriberUID);
+                console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+                // 清理这个UID的旧定时器（如果存在）
+                if (this.realtimeIntervals.has(subscriberUID)) {
+                    const oldTimer = this.realtimeIntervals.get(subscriberUID);
+                    console.log('[OKXDatafeed] ⚠️ Clearing old timer for UID:', subscriberUID, 'ID:', oldTimer);
+                    clearInterval(oldTimer);
+                    this.realtimeIntervals.delete(subscriberUID);
+                }
 
                 if (replayMode) {
+                    console.log('[OKXDatafeed] ❌ REPLAY MODE - Timer NOT created');
                     // In replay mode, use replay data for updates
                     this.realtimeCallback = onRealtimeCallback;
                 } else {
+                    // 使用const捕获当前值，避免闭包变量被覆盖
+                    const currentSymbol = symbolInfo.name;
+                    const currentResolution = resolution;
+
+                    console.log('[OKXDatafeed] ✅ NORMAL MODE - Creating timer...');
+
                     // For normal mode, use polling every 10 seconds for real-time updates
-                    this.realtimeInterval = setInterval(() => {
-                        this.getLatestBar(symbolInfo, resolution, onRealtimeCallback);
+                    const timerId = setInterval(() => {
+                        console.log('[OKXDatafeed] ⏰ Real-time tick for', currentSymbol, currentResolution);
+                        this.getLatestBar(symbolInfo, currentResolution, onRealtimeCallback);
                     }, 10000);
+
+                    // 存储到Map中，以UID为key
+                    this.realtimeIntervals.set(subscriberUID, timerId);
+                    console.log('[OKXDatafeed] ✅ Timer created for UID:', subscriberUID, 'ID:', timerId);
+                    console.log('[OKXDatafeed] 🚀 Real-time updates started for', currentSymbol, currentResolution);
                 }
             }
 
             unsubscribeBars(subscriberUID) {
-                console.log('[OKXDatafeed] unsubscribeBars:', subscriberUID);
-                if (this.realtimeInterval) {
-                    clearInterval(this.realtimeInterval);
-                    this.realtimeInterval = null;
+                console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+                console.log('[OKXDatafeed] unsubscribeBars CALLED');
+                console.log('[OKXDatafeed] - subscriberUID:', subscriberUID);
+
+                // 只清理匹配UID的定时器
+                if (this.realtimeIntervals.has(subscriberUID)) {
+                    const timerId = this.realtimeIntervals.get(subscriberUID);
+                    console.log('[OKXDatafeed] ⚠️ Clearing timer for UID:', subscriberUID, 'ID:', timerId);
+                    clearInterval(timerId);
+                    this.realtimeIntervals.delete(subscriberUID);
+                    console.log('[OKXDatafeed] ✅ Timer cleared');
+                } else {
+                    console.log('[OKXDatafeed] ℹ️ No timer found for UID:', subscriberUID);
                 }
+                console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
             }
 
             getLatestBar(symbolInfo, resolution, onRealtimeCallback) {
-                const now = Math.floor(Date.now() / 1000);
-                const from = now - 3600; // Get last hour of data
+                // 添加调试日志
+                console.log('🔄 [REALTIME UPDATE] getLatestBar for', symbolInfo.name, resolution, '- Type:', typeof resolution);
 
-                // Convert resolution to OKX format (same as getBars)
-                let okxInterval = resolution;
-                if (resolution === '1') okxInterval = '1m';
-                else if (resolution === '3') okxInterval = '3m';
-                else if (resolution === '5') okxInterval = '5m';
-                else if (resolution === '15') okxInterval = '15m';
-                else if (resolution === '30') okxInterval = '30m';
-                else if (resolution === '60') okxInterval = '1H';
-                else if (resolution === '120') okxInterval = '2H';
-                else if (resolution === '240') okxInterval = '4H';
-                else if (resolution === '360') okxInterval = '6H';
-                else if (resolution === '720') okxInterval = '12H';
-                else if (resolution === '1D' || resolution === 'D') okxInterval = '1D';
-                else if (resolution === '1W' || resolution === 'W') okxInterval = '1W';
-                else if (resolution === '1M' || resolution === 'M') okxInterval = '1M';
+                // Calculate time range for the latest bar
+                // We need timestamps in milliseconds for the API
+                const now = Date.now(); // milliseconds
+
+                // Calculate bar duration based on resolution - handle both TradingView and OKX formats
+                let barDurationMs;
+                switch(resolution) {
+                    case '1':
+                    case '1m':
+                        barDurationMs = 60 * 1000;
+                        break;
+                    case '3':
+                    case '3m':
+                        barDurationMs = 3 * 60 * 1000;
+                        break;
+                    case '5':
+                    case '5m':
+                        barDurationMs = 5 * 60 * 1000;
+                        break;
+                    case '15':
+                    case '15m':
+                        barDurationMs = 15 * 60 * 1000;
+                        break;
+                    case '30':
+                    case '30m':
+                        barDurationMs = 30 * 60 * 1000;
+                        break;
+                    case '60':
+                    case '1H':
+                        barDurationMs = 60 * 60 * 1000;
+                        break;
+                    case '120':
+                    case '2H':
+                        barDurationMs = 2 * 60 * 60 * 1000;
+                        break;
+                    case '240':
+                    case '4H':
+                        barDurationMs = 4 * 60 * 60 * 1000;
+                        break;
+                    case '360':
+                    case '6H':
+                        barDurationMs = 6 * 60 * 60 * 1000;
+                        break;
+                    case '720':
+                    case '12H':
+                        barDurationMs = 12 * 60 * 60 * 1000;
+                        break;
+                    case '1D':
+                    case 'D':
+                        barDurationMs = 24 * 60 * 60 * 1000;
+                        break;
+                    case '1W':
+                    case 'W':
+                        barDurationMs = 7 * 24 * 60 * 60 * 1000;
+                        break;
+                    case '1M':
+                    case 'M':
+                        barDurationMs = 30 * 24 * 60 * 60 * 1000;
+                        break;
+                    default:
+                        console.warn('[OKXDatafeed] Unknown resolution for duration:', resolution, 'defaulting to 1m');
+                        barDurationMs = 60 * 1000; // default to 1 minute
+                }
+
+                // Request a small time window around the current time to get the latest bar
+                // Use 2x bar duration to ensure we get the current bar
+                const startTime = now - (barDurationMs * 2);
+                const endTime = now;
+
+                // Convert resolution to OKX format - handle both TradingView and OKX formats
+                let okxInterval;
+                switch(resolution) {
+                    case '1':
+                    case '1m':
+                        okxInterval = '1m';
+                        break;
+                    case '3':
+                    case '3m':
+                        okxInterval = '3m';
+                        break;
+                    case '5':
+                    case '5m':
+                        okxInterval = '5m';
+                        break;
+                    case '15':
+                    case '15m':
+                        okxInterval = '15m';
+                        break;
+                    case '30':
+                    case '30m':
+                        okxInterval = '30m';
+                        break;
+                    case '60':
+                    case '1H':
+                        okxInterval = '1H';
+                        break;
+                    case '120':
+                    case '2H':
+                        okxInterval = '2H';
+                        break;
+                    case '240':
+                    case '4H':
+                        okxInterval = '4H';
+                        break;
+                    case '360':
+                    case '6H':
+                        okxInterval = '6H';
+                        break;
+                    case '720':
+                    case '12H':
+                        okxInterval = '12H';
+                        break;
+                    case '1D':
+                    case 'D':
+                        okxInterval = '1D';
+                        break;
+                    case '1W':
+                    case 'W':
+                        okxInterval = '1W';
+                        break;
+                    case '1M':
+                    case 'M':
+                        okxInterval = '1M';
+                        break;
+                    default:
+                        console.warn('[OKXDatafeed] Unknown resolution:', resolution, 'defaulting to 1m');
+                        okxInterval = '1m';
+                }
 
                 const params = new URLSearchParams({
                     symbol: symbolInfo.name,
                     interval: okxInterval,
-                    limit: '1'
+                    start_time: Math.floor(startTime).toString(),
+                    end_time: Math.floor(endTime).toString()
                 });
 
                 fetch(`${this.baseUrl}/api/okx/klines?${params}`)
                     .then(response => response.json())
                     .then(data => {
                         if (data.status === 'ok' && data.data && data.data.length > 0) {
-                            const kline = data.data[0];
+                            // 数据是升序排列（oldest first），取最后一个元素获得最新K线
+                            const kline = data.data[data.data.length - 1];
                             const bar = {
                                 time: kline.open_time, // Already in milliseconds from API
                                 open: parseFloat(kline.open_price),
