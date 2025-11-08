@@ -10,8 +10,8 @@ import random
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 
-from okx_cache_manager import get_cache_manager
-from okx_rate_limiter import get_rate_limiter
+from services.okx_cache_manager import get_cache_manager
+from services.okx_rate_limiter import get_rate_limiter
 
 logger = logging.getLogger(__name__)
 
@@ -217,7 +217,6 @@ class OKXService:
         self,
         symbol: str,
         interval: str = "1D",
-        limit: int = 100,
         start_time: Optional[int] = None,
         end_time: Optional[int] = None
     ) -> List[Dict[str, Any]]:
@@ -240,7 +239,6 @@ class OKXService:
         klines = await self.cache_manager.get_klines_cached(
             symbol=symbol,
             interval=interval,
-            limit=limit,
             start_time=start_time,
             end_time=end_time
         )

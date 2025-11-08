@@ -720,16 +720,18 @@
                 }
 
                 // Handle both old and new API signatures
-                let fromTimestamp, toTimestamp;
+                let fromTimestamp, toTimestamp, countBack;
 
                 if (typeof periodParams === 'object' && periodParams !== null) {
                     // New API: periodParams is an object with from, to, countBack
                     fromTimestamp = periodParams.from;
                     toTimestamp = periodParams.to || Date.now();
+                    countBack = periodParams.countBack || 300; // TradingView 请求的数据条数
                 } else {
                     // Old API: periodParams is actually 'from', and onHistoryCallback is 'to'
                     fromTimestamp = periodParams;
                     toTimestamp = onHistoryCallback;
+                    countBack = 300; // 默认值
                     // Shift other parameters
                     onHistoryCallback = onErrorCallback;
                     onErrorCallback = firstDataRequest;
@@ -762,19 +764,44 @@
                     toMs = Math.floor(toTimestamp * 1000);
                 }
 
-                try {
-                    console.log('[OKXDatafeed] getBars:', {
-                        symbol: symbolInfo.name,
-                        resolution,
-                        from: fromTimestamp,
-                        to: toTimestamp,
-                        fromDate: new Date(fromMs).toISOString(),
-                        toDate: new Date(toMs).toISOString(),
-                        firstDataRequest
-                    });
-                } catch (e) {
-                    console.error('[OKXDatafeed] Date conversion error:', e, { fromMs, toMs });
+                // 【关键】OKX 历史数据边界检查（第一道防线）
+                // OKX 最早数据时间：2017-10-01
+                const OKX_EARLIEST_MS = new Date('2017-10-01T00:00:00Z').getTime();
+
+                if (fromMs < OKX_EARLIEST_MS) {
+                    const fromDate = new Date(fromMs);
+                    const yearsAgo = (Date.now() - fromMs) / (1000 * 60 * 60 * 24 * 365);
+
+                    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+                    console.log(`[OKXDatafeed] 🛑 BOUNDARY PROTECTION TRIGGERED`);
+                    console.log(`[OKXDatafeed] 📊 ${symbolInfo.name} | ${resolution} | ${firstDataRequest ? 'FIRST' : 'LOAD MORE'}`);
+                    console.log(`[OKXDatafeed] Requested from: ${fromDate.toISOString()} (${yearsAgo.toFixed(1)} years ago)`);
+                    console.log(`[OKXDatafeed] OKX earliest data: 2017-10-01T00:00:00Z`);
+                    console.log(`[OKXDatafeed] CountBack requested: ${countBack} bars`);
+                    console.log(`[OKXDatafeed] 🚫 REJECTED - Returning empty array with noData=true`);
+                    console.log(`[OKXDatafeed] This prevents infinite loop caused by TradingView requesting more data when countBack is not satisfied`);
+                    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+                    // 根据 TradingView 文档：返回空数组 + noData=true 来停止进一步请求
+                    onHistoryCallback([], { noData: true });
+                    return;
                 }
+
+                // --- 循环问题调试日志 ---
+                try {
+                    const fromDate = new Date(fromMs);
+                    const toDate = new Date(toMs);
+                    const secondsPerBar = calculateSecondsPerBar(resolution);
+                    const theoreticalBarCount = Math.round((toMs - fromMs) / (secondsPerBar * 1000));
+
+                    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+                    console.log(`[FE Request] Symbol: ${symbolInfo.name}, Resolution: ${resolution}`);
+                    console.log(`[FE Request] Requested Time Range: ${fromDate.toISOString()} -> ${toDate.toISOString()}`);
+                    console.log(`[FE Request] TV expects ~${countBack} bars. Theoretical bars in range: ${theoreticalBarCount}`);
+                } catch (e) {
+                    console.error('[FE Request] Error calculating theoretical bars:', e);
+                }
+                // --- 结束调试日志 ---
 
                 // Convert resolution to OKX format
                 let okxInterval = resolution;
@@ -797,7 +824,6 @@
                 const params = new URLSearchParams({
                     symbol: symbolInfo.name,
                     interval: okxInterval,
-                    limit: '300',
                     start_time: fromMs, // Already converted to milliseconds
                     end_time: toMs
                 });
@@ -809,38 +835,69 @@
                     .then(data => {
                         console.log('[OKXDatafeed] API Response:', data);
 
-                        if (data.status === 'ok' && data.data) {
-                            const bars = data.data.map(kline => {
-                                // TradingView expects time in milliseconds
-                                const bar = {
-                                    time: kline.open_time, // Already in milliseconds from API
-                                    open: parseFloat(kline.open_price),
-                                    high: parseFloat(kline.high_price),
-                                    low: parseFloat(kline.low_price),
-                                    close: parseFloat(kline.close_price),
-                                    volume: parseFloat(kline.volume)
-                                };
-                                //console.log('[OKXDatafeed] Bar:', {
-                                //    time: bar.time,
-                                //    date: new Date(bar.time).toISOString(),
-                                //    ohlcv: `O:${bar.open} H:${bar.high} L:${bar.low} C:${bar.close} V:${bar.volume}`
-                                //});
-                                return bar;
-                            });
-
-                            // Sort bars by time (ascending for TradingView)
-                            bars.sort((a, b) => a.time - b.time);
-
-                            console.log(`[OKXDatafeed] Loaded ${bars.length} bars, range: ${bars.length > 0 ? new Date(bars[0].time).toISOString() + ' to ' + new Date(bars[bars.length-1].time).toISOString() : 'empty'}`);
-                            onHistoryCallback(bars, { noData: bars.length === 0 });
-
-                            // Update status
-                            if (bars.length > 0) {
-                                this.updateStatus(symbolInfo.name, bars[bars.length - 1]);
-                            }
-                        } else {
+                        // 检查后端返回状态
+                        if (data.status !== 'ok') {
                             console.error('[OKXDatafeed] Error in response:', data);
                             onHistoryCallback([], { noData: true });
+                            return;
+                        }
+
+                        // 如果完全没有数据
+                        if (!data.data || data.data.length === 0) {
+                            console.log('[OKXDatafeed] No data returned from backend');
+                            onHistoryCallback([], { noData: true });
+                            return;
+                        }
+
+                        // 转换数据
+                        const bars = data.data.map(kline => {
+                            const bar = {
+                                time: kline.open_time,
+                                open: parseFloat(kline.open_price),
+                                high: parseFloat(kline.high_price),
+                                low: parseFloat(kline.low_price),
+                                close: parseFloat(kline.close_price),
+                                volume: parseFloat(kline.volume)
+                            };
+                            return bar;
+                        });
+
+                        // Sort bars by time (ascending for TradingView)
+                        bars.sort((a, b) => a.time - b.time);
+
+                        // --- 循环问题调试日志 ---
+                        if (bars.length > 0) {
+                            const actualStartDate = new Date(bars[0].time).toISOString();
+                            const actualEndDate = new Date(bars[bars.length - 1].time).toISOString();
+                            console.log(`[FE Response] Received ${bars.length} bars. Actual Range: ${actualStartDate} -> ${actualEndDate}`);
+                        } else {
+                            console.log(`[FE Response] Received 0 bars.`);
+                        }
+                        // --- 结束调试日志 ---
+
+                        // 【重要】检查返回数据量 vs TradingView 期望的 countBack
+                        if (bars.length < countBack) {
+                            console.warn(`[OKXDatafeed] ⚠️ Data count mismatch: Returned ${bars.length} bars, but TradingView requested ${countBack}`);
+                            console.warn(`[OKXDatafeed] This may cause TradingView to request more historical data`);
+                        }
+
+                        // 关键：检查是否到达历史边界
+                        // 如果后端标记了 noData=true，说明已到达 OKX 最早数据（2017-10-01）
+                        if (data.noData === true) {
+                            console.warn('[OKXDatafeed] ⚠️ HISTORY BOUNDARY REACHED - Backend marked noData=true');
+                            console.warn(`[OKXDatafeed] 🚫 Returning empty array with noData=true to STOP TradingView from requesting earlier data`);
+                            console.warn(`[OKXDatafeed] This is critical to prevent infinite loop when data count < countBack`);
+                            // 根据 TradingView 文档：返回空数组是最可靠的停止方式
+                            onHistoryCallback([], { noData: true });
+                            return;
+                        }
+
+                        // 正常情况：返回数据，TradingView 可以继续请求更早的数据
+                        onHistoryCallback(bars, { noData: false });
+
+                        // Update status
+                        if (bars.length > 0) {
+                            this.updateStatus(symbolInfo.name, bars[bars.length - 1]);
                         }
                     })
                     .catch(error => {

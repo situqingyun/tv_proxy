@@ -7,8 +7,9 @@ from fastapi import APIRouter, Query, HTTPException
 from typing import Optional
 import logging
 import time
+from datetime import datetime
 
-from okx_service import OKXService
+from services.okx_service import OKXService
 
 logger = logging.getLogger(__name__)
 
@@ -75,25 +76,65 @@ def create_okx_router(okx_service: OKXService) -> APIRouter:
     async def get_okx_klines(
         symbol: str = Query(..., description="交易对，如BTC-USDT"),
         interval: str = Query("1D", description="时间周期，如1m,5m,1H,1D"),
-        limit: int = Query(100, ge=1, le=300, description="返回数据条数"),
         start_time: Optional[int] = Query(None, description="开始时间戳（毫秒）"),
         end_time: Optional[int] = Query(None, description="结束时间戳（毫秒）")
     ):
         """获取OKX K线数据（带缓存）"""
+        # --- 循环问题调试日志 ---
+        start_dt = datetime.fromtimestamp(start_time / 1000).isoformat() if start_time else "N/A"
+        end_dt = datetime.fromtimestamp(end_time / 1000).isoformat() if end_time else "N/A"
+        logger.info(
+            f"[Klines Request] Symbol: {symbol}, Interval: {interval}, "
+            f"Request Range: {start_dt} -> {end_dt}"
+        )
+        # --- 结束调试日志 ---
+
         try:
             klines = await okx_service.get_klines(
                 symbol=symbol,
                 interval=interval,
-                limit=limit,
                 start_time=start_time,
                 end_time=end_time
             )
 
-            return {
+            # --- 循环问题调试日志 ---
+            if klines:
+                actual_start_dt = datetime.fromtimestamp(klines[0]['open_time'] / 1000).isoformat()
+                actual_end_dt = datetime.fromtimestamp(klines[-1]['open_time'] / 1000).isoformat()
+                logger.info(
+                    f"[Klines Response] Returned {len(klines)} bars. "
+                    f"Actual Range: {actual_start_dt} -> {actual_end_dt}"
+                )
+            else:
+                logger.info("[Klines Response] Returned 0 bars (No data).")
+            # --- 结束调试日志 ---
+
+            # 构建响应
+            response = {
                 'status': 'ok',
                 'data': klines,
                 'count': len(klines)
             }
+
+            # 检查是否已到达历史边界（无更早数据）
+            cache_manager = okx_service.cache_manager
+            if hasattr(cache_manager, '_no_earlier_data') and cache_manager._no_earlier_data:
+                # 告诉前端没有更早的数据了
+                response['noData'] = True
+                logger.info(f"[API Response] Returning {len(klines)} klines with noData=True flag")
+
+            # 如果完全没有数据，也标记 noData
+            if len(klines) == 0:
+                response['noData'] = True
+                logger.info(f"[API Response] No klines available, returning noData=True")
+
+            # --- 循环问题调试日志 ---
+            final_no_data_status = response.get('noData', False)
+            logger.info(f"[Klines Final] Final noData flag status: {final_no_data_status}")
+            # --- 结束调试日志 ---
+
+            return response
+
         except Exception as e:
             logger.exception(f"Error getting OKX klines: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error getting OKX klines: {str(e)}")

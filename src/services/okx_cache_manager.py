@@ -15,7 +15,7 @@ from psycopg2.extras import RealDictCursor, execute_batch
 import okx.MarketData as Market
 import okx.websocket as okxws
 
-from okx_rate_limiter import get_rate_limiter
+from services.okx_rate_limiter import get_rate_limiter
 
 logger = logging.getLogger(__name__)
 
@@ -30,10 +30,14 @@ class OKXCacheManager:
     }
 
     # 数据保留期限（天）- 基于实际测试的regular API限制
+    # 重要提示：这些值基于2025-11-02修复before/after参数后的实际测试结果
+    # 修复前错误地使用参数导致误以为1H只有12.5天，实际Regular API有60天
+    # History API至少可追溯365天
+    # OKX可能随时更改数据保留策略，建议定期验证
     DATA_RETENTION_LIMITS = {
-        '1m': 0.5, '3m': 0.5, '5m': 0.5, '15m': 0.5, '30m': 0.5,
-        '1H': 30, '2H': 30, '4H': 30, '6H': 30, '12H': 30,
-        '1D': 730, '1W': 730, '1M': 730
+        '1m': 0.5, '3m': 0.5, '5m': 0.5, '15m': 0.5, '30m': 0.5,  # 短周期：约0.5天
+        '1H': 60, '2H': 60, '4H': 60, '6H': 60, '12H': 60,  # 小时周期：60天（实测）
+        '1D': 90, '1W': 90, '1M': 90  # 日周期：保守设为90天（待验证）
     }
 
     def __init__(self, db_config: Dict, okx_config: Dict):
@@ -73,24 +77,36 @@ class OKXCacheManager:
         """获取数据库连接"""
         return psycopg2.connect(**self.db_config, cursor_factory=RealDictCursor)
     
-    async def get_klines_cached(self, symbol: str, interval: str = "1D", 
-                               limit: int = 100, start_time: int = None,
-                               end_time: int = None) -> List[Dict]:
+    async def get_klines_cached(self, symbol: str, interval: str = "1D",
+                               start_time: int = None, end_time: int = None) -> List[Dict]:
         """
-        获取K线数据，优先从缓存读取，缺失数据从API补充
-        
+        获取K线数据
+
+        注意：当前完全禁用缓存，总是从 OKX API 获取数据
+
         Args:
             symbol: 交易对，如 "BTC-USDT"
             interval: 时间周期
-            limit: 返回数据条数
             start_time: 开始时间戳（毫秒）
             end_time: 结束时间戳（毫秒）
         """
-        # 1. 先从数据库缓存查询
-        cached_data = await self._get_cached_klines(symbol, interval, start_time, end_time, limit)
-        
+        # 0. 参数验证和默认值处理
+        import time as time_module
+
+        if end_time is None:
+            end_time = int(time_module.time() * 1000)
+
+        if start_time is None:
+            # 如果没有提供 start_time，则无法确定范围，返回空
+            # （在实际应用中，前端应该总是提供 start_time 和 end_time）
+            logger.warning("get_klines_cached called without start_time. Returning empty list.")
+            return []
+
+        # 1. 跳过缓存读取（完全禁用缓存）
+        cached_data = []  # 不读取缓存
+
         # 2. 检查是否需要从API获取更多数据
-        missing_ranges = self._find_missing_ranges(cached_data, start_time, end_time, interval, limit)
+        missing_ranges = self._find_missing_ranges(cached_data, start_time, end_time, interval)
         
         # 3. 从API获取缺失数据（使用智能分段+分页策略）
         api_data = []
@@ -128,9 +144,19 @@ class OKXCacheManager:
         # 4. 合并缓存数据和API数据，去重排序
         all_data = cached_data + api_data
         all_data = self._deduplicate_klines(all_data)
-        all_data.sort(key=lambda x: x['open_time'], reverse=True)
-        
-        return all_data[:limit]
+        # 关键修复：TradingView要求数据按时间升序排列 (oldest to newest)
+        all_data.sort(key=lambda x: x['open_time'], reverse=False)
+
+        # 5. 检测是否已到达历史边界（无更早数据）
+        # 这个标志会在 _find_missing_ranges() 中设置
+        if hasattr(self, '_reached_history_boundary') and self._reached_history_boundary:
+            logger.info("[History Boundary] Reached OKX earliest data (2017-10-01), no earlier data available")
+            # 这个标志会被路由层读取，用于返回 noData 给前端
+            self._no_earlier_data = True
+        else:
+            self._no_earlier_data = False
+
+        return all_data
     
     async def get_orderbook_cached(self, symbol: str, depth: int = 20) -> Optional[Dict]:
         """获取订单簿数据，优先从缓存读取"""
@@ -233,10 +259,48 @@ class OKXCacheManager:
             return []
     
     def _find_missing_ranges(self, cached_data: List[Dict], start_time: int,
-                           end_time: int, interval: str, limit: int) -> List[Tuple[int, int]]:
-        """查找缺失的数据时间范围"""
-        # 暂时禁用缓存，总是从 API 获取最新数据
-        # 这样可以确保数据的准确性
+                           end_time: int, interval: str) -> List[Tuple[int, int]]:
+        """
+        查找缺失的数据时间范围
+
+        策略：完全禁用缓存，总是从 API 获取数据
+        但添加历史边界保护，避免请求早于 OKX 最早数据的时间
+
+        【关键】如果请求早于 OKX 最早数据，返回空列表并标记边界
+        这样可以让前端收到空数组 + noData=true，符合 TradingView 规范
+        """
+        # 参数验证
+        if start_time is None or end_time is None:
+            logger.error(f"[Validation Error] start_time or end_time is None: start_time={start_time}, end_time={end_time}")
+            self._reached_history_boundary = False
+            return []
+
+        # OKX 历史数据最早时间（2017年10月1日）
+        okx_earliest = int(datetime(2017, 10, 1).timestamp() * 1000)
+
+        # 如果请求的 start_time 早于 OKX 最早数据
+        if start_time < okx_earliest:
+            logger.warning(
+                f"[Boundary Protection] 🛑 REJECTED - Requested start_time "
+                f"{datetime.fromtimestamp(start_time/1000).isoformat()} "
+                f"is earlier than OKX earliest data (2017-10-01)"
+            )
+            logger.warning(
+                f"[Boundary Protection] Returning EMPTY range to trigger noData=true response"
+            )
+            logger.warning(
+                f"[Boundary Protection] This prevents TradingView infinite loop when countBack cannot be satisfied"
+            )
+
+            # 标记已到达边界
+            self._reached_history_boundary = True
+            # 返回空列表，这样 get_klines_cached() 会返回空数据
+            return []
+        else:
+            self._reached_history_boundary = False
+
+        # 完全禁用缓存，总是返回整个范围
+        logger.info(f"[No Cache] Fetching from API: {datetime.fromtimestamp(start_time/1000).date()} → {datetime.fromtimestamp(end_time/1000).date()}")
         return [(start_time, end_time)]
 
     def _calculate_time_segments(
@@ -275,10 +339,13 @@ class OKXCacheManager:
             # 请求的数据超出了regular API的范围
             if is_top_currency:
                 # 主流货币：可以使用history API获取旧数据
-                # 段1: 旧数据段 [start_time, regular_boundary)
-                segments.append((start_time, regular_boundary_ms, 'history'))
+                # 修复：history_end应该是regular_boundary，不是min(end_time, regular_boundary)
+                # 否则当start_time==regular_boundary时，history段会变成0天
+                history_end = regular_boundary_ms
+                # 段1: 旧数据段 [start_time, history_end) - 由History API负责
+                segments.append((start_time, history_end, 'history'))
 
-                # 段2: 新数据段 [regular_boundary, end_time]
+                # 段2: 新数据段 [regular_boundary, end_time] - 由Regular API负责
                 if end_time > regular_boundary_ms:
                     segments.append((regular_boundary_ms, end_time, 'regular'))
 
@@ -292,14 +359,16 @@ class OKXCacheManager:
             segments.append((start_time, end_time, 'regular'))
             logger.info(f"[Segments] Single Regular segment for {symbol}")
 
-        # 记录分段信息
+        # 记录分段信息（改进：显示更多细节）
         for i, (seg_start, seg_end, api_type) in enumerate(segments):
             from datetime import datetime
+            days = (seg_end - seg_start) / (86400 * 1000)
+            expected_bars = int(days * 24 * (3600000 / self._interval_to_ms(interval)))
             logger.info(
                 f"[Segment {i+1}] {api_type.upper()}: "
                 f"{datetime.fromtimestamp(seg_start/1000).date()} → "
                 f"{datetime.fromtimestamp(seg_end/1000).date()} "
-                f"({(seg_end - seg_start) / (86400 * 1000):.1f} days)"
+                f"({days:.1f}天, 预期~{expected_bars}根K线)"
             )
 
         return segments
@@ -307,10 +376,16 @@ class OKXCacheManager:
     async def _fetch_segment_with_pagination(
         self, symbol: str, interval: str,
         start_time: int, end_time: int,
-        api_type: str, max_bars: int = 300
+        api_type: str, max_bars_per_request: int = 300
     ) -> List[Dict]:
         """
-        获取单个时间段的完整数据，支持分页
+        获取单个时间段的完整数据，严格按照OKX文档使用'after'参数进行分页。
+        从end_time开始，向前（获取更旧的数据）循环拉取。
+
+        注意：OKX API参数语义反直觉！
+        - 'before': 时间范围的开始边界（不早于此时间） - start_time
+        - 'after': 时间范围的结束边界（不晚于此时间） - end_time
+        - 单独使用'after'时，返回该时间之前的更旧数据
 
         Args:
             symbol: 交易对
@@ -318,24 +393,14 @@ class OKXCacheManager:
             start_time: 段开始时间（毫秒）
             end_time: 段结束时间（毫秒）
             api_type: 'history' 或 'regular'
-            max_bars: 单次最多获取的K线数量
+            max_bars_per_request: 单次API请求最多获取的K线数量
 
         Returns:
             该时间段内的所有K线数据
         """
         all_klines = []
-        current_after = end_time  # OKX的after参数：从这个时间往前取更旧的数据
-
-        interval_ms = self._interval_to_ms(interval)
-        total_bars_needed = int((end_time - start_time) / interval_ms) + 1
-
-        # 计算需要分几页
-        pages_needed = (total_bars_needed + max_bars - 1) // max_bars
-
-        logger.info(
-            f"[Pagination] Need {total_bars_needed} bars, "
-            f"will fetch in {min(pages_needed, 10)} pages (max_bars={max_bars})"
-        )
+        # OKX的'after'参数用于获取指定时间戳之前的更旧的数据（反直觉但已验证）
+        current_after = end_time
 
         # 选择API method和endpoint
         if api_type == 'history':
@@ -345,50 +410,62 @@ class OKXCacheManager:
             api_method = self.market_api.get_candlesticks
             endpoint = '/api/v5/market/candles'
 
-        # 分页获取数据
-        for page in range(min(pages_needed, 20)):  # 最多20页，避免无限循环
+        # 最多循环20次，防止意外的无限循环
+        # 添加卡死检测：记录上一次的after值，如果连续相同则停止
+        last_after = None
+        stuck_count = 0
+
+        for page in range(20):
             try:
+                # 检测分页是否卡住（连续收到相同数据）
+                if current_after == last_after:
+                    stuck_count += 1
+                    if stuck_count >= 2:
+                        logger.warning(
+                            f"[Pagination] 检测到重复数据(after={current_after})，停止分页"
+                        )
+                        break
+                else:
+                    stuck_count = 0
+                last_after = current_after
+
                 await self.rate_limiter.wait_if_needed(endpoint)
 
                 params = {
                     'instId': symbol,
                     'bar': interval,
-                    'limit': str(min(max_bars, total_bars_needed - len(all_klines))),
+                    'limit': str(max_bars_per_request),
                     'after': str(current_after)
                 }
 
-                logger.info(f"[Pagination Page {page+1}] Fetching with after={current_after}")
+                logger.info(
+                    f"[Pagination Page {page+1}] Fetching with after={current_after} "
+                    f"({datetime.fromtimestamp(current_after/1000).isoformat()})"
+                )
                 response = api_method(**params)
 
                 if response['code'] == '0' and response['data']:
+                    # OKX API返回的数据是倒序的（新->旧），我们直接使用
                     batch = self._convert_kline_response(symbol, interval, response['data'])
                     logger.info(f"[Pagination Page {page+1}] Got {len(batch)} candles")
 
-                    # 过滤出在范围内的数据
-                    filtered_batch = [k for k in batch if start_time <= k['open_time'] <= end_time]
+                    # 过滤出仍在请求时间范围内的数据
+                    filtered_batch = [k for k in batch if k['open_time'] >= start_time]
                     all_klines.extend(filtered_batch)
 
-                    # 找到本批次最旧的时间
-                    if batch:
-                        oldest_time = min(k['open_time'] for k in batch)
+                    # 获取本批次最旧的时间戳
+                    oldest_time_in_batch = batch[-1]['open_time']
 
-                        # 如果已经到达或超出start_time，停止分页
-                        if oldest_time <= start_time:
-                            logger.info(f"[Pagination] Reached start_time, stopping")
-                            break
+                    # 更新下一次请求的'after'参数（继续向更旧的方向分页）
+                    current_after = oldest_time_in_batch
 
-                        # 更新after参数为最旧时间（用于下一页）
-                        current_after = oldest_time
-                    else:
-                        break
-
-                    # 如果获取的数据少于请求的limit，说明没有更多数据了
-                    if len(response['data']) < max_bars:
-                        logger.info(f"[Pagination] No more data available")
+                    # 如果本批次最旧的数据已经早于或等于我们的目标开始时间，或者返回的数据量小于请求量，说明已经取完
+                    if oldest_time_in_batch < start_time or len(batch) < max_bars_per_request:
+                        logger.info(f"[Pagination] Reached end of data for this segment.")
                         break
                 else:
                     logger.warning(f"[Pagination] No data in response: {response.get('msg', 'empty')}")
-                    break
+                    break  # 没有数据了，退出循环
 
             except Exception as e:
                 logger.error(f"[Pagination] Error on page {page+1}: {e}")
@@ -449,10 +526,19 @@ class OKXCacheManager:
                     'limit': str(min(300, limit))
                 }
 
-                if end_time:
+                # 正确使用before和after参数指定时间范围
+                # before=开始时间(更早), after=结束时间(更晚)
+                if start_time and end_time:
+                    params['before'] = str(start_time)
+                    params['after'] = str(end_time)
+                elif start_time:
+                    # 只指定开始时间，获取该时间之后的数据
+                    params['before'] = str(start_time)
+                elif end_time:
+                    # 只指定结束时间，获取该时间之前的数据
                     params['after'] = str(end_time)
 
-                logger.info(f"[History API] Trying for {symbol} {interval}, data_age={data_age_days:.1f}d > {regular_limit}d")
+                logger.info(f"[History API] Trying for {symbol} {interval}, data_age={data_age_days:.1f}d > {regular_limit}d, params={params}")
                 response = self.market_api.get_history_candlesticks(**params)
 
                 if response['code'] == '0' and response['data']:
@@ -473,10 +559,16 @@ class OKXCacheManager:
             'limit': str(min(300, limit))
         }
 
-        if end_time:
+        # 正确使用before和after参数指定时间范围
+        if start_time and end_time:
+            params['before'] = str(start_time)
+            params['after'] = str(end_time)
+        elif start_time:
+            params['before'] = str(start_time)
+        elif end_time:
             params['after'] = str(end_time)
 
-        logger.info(f"[Regular API] Fetching {symbol} {interval}")
+        logger.info(f"[Regular API] Fetching {symbol} {interval}, params={params}")
         response = self.market_api.get_candlesticks(**params)
 
         if response['code'] == '0' and response['data']:
@@ -648,6 +740,11 @@ class OKXCacheManager:
     
     def _interval_to_ms(self, interval: str) -> int:
         """将时间周期转换为毫秒"""
+        # 验证输入
+        if not interval or not isinstance(interval, str):
+            logger.warning(f"Invalid interval: {interval}, using default 1H")
+            return 60 * 60 * 1000  # 默认1小时
+
         interval_map = {
             '1m': 60 * 1000,
             '3m': 3 * 60 * 1000,
@@ -663,7 +760,11 @@ class OKXCacheManager:
             '1W': 7 * 24 * 60 * 60 * 1000,
             '1M': 30 * 24 * 60 * 60 * 1000
         }
-        return interval_map.get(interval, 60 * 1000)
+        result = interval_map.get(interval, 60 * 1000)
+        if result is None:
+            logger.warning(f"Interval {interval} not found in map, using default 1m")
+            return 60 * 1000
+        return result
     
     async def cleanup_old_data(self, days: int = 30):
         """清理旧数据"""
