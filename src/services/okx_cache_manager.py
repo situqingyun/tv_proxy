@@ -339,13 +339,14 @@ class OKXCacheManager:
             # 请求的数据超出了regular API的范围
             if is_top_currency:
                 # 主流货币：可以使用history API获取旧数据
-                # 修复：history_end应该是regular_boundary，不是min(end_time, regular_boundary)
-                # 否则当start_time==regular_boundary时，history段会变成0天
-                history_end = regular_boundary_ms
+                # 【关键修复】history_end 应该取 end_time 和 regular_boundary 的较小值
+                # 这样才能正确处理纯历史数据请求(例如请求2025-09-15的数据)
+                history_end = min(end_time, regular_boundary_ms)
                 # 段1: 旧数据段 [start_time, history_end) - 由History API负责
                 segments.append((start_time, history_end, 'history'))
 
                 # 段2: 新数据段 [regular_boundary, end_time] - 由Regular API负责
+                # 只有当 end_time 超过 regular_boundary 时才需要这一段
                 if end_time > regular_boundary_ms:
                     segments.append((regular_boundary_ms, end_time, 'regular'))
 

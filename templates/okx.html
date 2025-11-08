@@ -726,7 +726,18 @@
                 if (typeof periodParams === 'object' && periodParams !== null) {
                     // New API: periodParams is an object with from, to, countBack
                     fromTimestamp = periodParams.from;
-                    toTimestamp = periodParams.to || Date.now();
+                    // 【修复】在回放模式下,不使用 Date.now(),而使用回放结束时间
+                    if (!periodParams.to) {
+                        if (replayMode && tradingState.replayEndTime) {
+                            toTimestamp = tradingState.replayEndTime; // 使用回放结束时间(秒)
+                            console.log('[OKXDatafeed] 🎬 Replay mode: using replayEndTime as toTimestamp:', toTimestamp);
+                        } else {
+                            toTimestamp = Math.floor(Date.now() / 1000); // 转换为秒
+                            console.log('[OKXDatafeed] ⏰ Normal mode: using current time as toTimestamp:', toTimestamp);
+                        }
+                    } else {
+                        toTimestamp = periodParams.to;
+                    }
                     countBack = periodParams.countBack || 300; // TradingView 请求的数据条数
                 } else {
                     // Old API: periodParams is actually 'from', and onHistoryCallback is 'to'
@@ -759,10 +770,50 @@
                     // Already in milliseconds
                     fromMs = Math.floor(fromTimestamp);
                     toMs = Math.floor(toTimestamp);
+                    console.log('[OKXDatafeed] 📊 Timestamps detected as MILLISECONDS:', {
+                        from: fromMs,
+                        to: toMs,
+                        fromDate: new Date(fromMs).toISOString(),
+                        toDate: new Date(toMs).toISOString()
+                    });
                 } else {
                     // In seconds, convert to milliseconds
                     fromMs = Math.floor(fromTimestamp * 1000);
                     toMs = Math.floor(toTimestamp * 1000);
+                    console.log('[OKXDatafeed] 📊 Timestamps detected as SECONDS, converted to milliseconds:', {
+                        originalFrom: fromTimestamp,
+                        originalTo: toTimestamp,
+                        convertedFrom: fromMs,
+                        convertedTo: toMs,
+                        fromDate: new Date(fromMs).toISOString(),
+                        toDate: new Date(toMs).toISOString()
+                    });
+                }
+
+                // 【新增】回放模式下验证时间戳是否在回放范围内
+                if (replayMode && tradingState.replayStartTime && tradingState.replayEndTime) {
+                    const replayStartMs = tradingState.replayStartTime * 1000;
+                    const replayEndMs = tradingState.replayEndTime * 1000;
+
+                    if (toMs > replayEndMs) {
+                        console.warn('[OKXDatafeed] ⚠️ REPLAY MODE: Request exceeds replay end time', {
+                            requestedTo: new Date(toMs).toISOString(),
+                            replayEnd: new Date(replayEndMs).toISOString(),
+                            adjusting: 'Capping toMs to replayEndMs'
+                        });
+                        toMs = replayEndMs;
+                    }
+
+                    console.log('[OKXDatafeed] 🎬 REPLAY MODE: Time range validation passed', {
+                        replayRange: {
+                            start: new Date(replayStartMs).toISOString(),
+                            end: new Date(replayEndMs).toISOString()
+                        },
+                        requestRange: {
+                            from: new Date(fromMs).toISOString(),
+                            to: new Date(toMs).toISOString()
+                        }
+                    });
                 }
 
                 // 【关键】OKX 历史数据边界检查（第一道防线）
@@ -1014,6 +1065,12 @@
             }
 
             getLatestBar(symbolInfo, resolution, onRealtimeCallback) {
+                // 【修复】回放模式下不应该执行实时更新
+                if (replayMode) {
+                    console.log('🎬 [REALTIME UPDATE] ❌ BLOCKED - Replay mode active, skipping getLatestBar');
+                    return;
+                }
+
                 // 添加调试日志
                 console.log('🔄 [REALTIME UPDATE] getLatestBar for', symbolInfo.name, resolution, '- Type:', typeof resolution);
 
@@ -1368,6 +1425,26 @@
 
             if (playBtn) playBtn.style.display = 'inline-block';
             if (pauseBtn) pauseBtn.style.display = 'none';
+
+            console.log('⏸️ [PLAYBACK] Stopped (replayMode still active)');
+        }
+
+        // Exit replay mode and return to normal mode
+        function exitReplayMode() {
+            stopPlayback();
+            replayMode = false;
+            console.log('🔄 [REPLAY MODE] ❌ DEACTIVATED - returning to normal mode');
+
+            // Clear replay state
+            tradingState.replayStartTime = null;
+            tradingState.replayEndTime = null;
+            tradingState.currentBarTime = null;
+
+            // Optional: refresh the chart to load realtime data
+            if (window.widget) {
+                const chart = window.widget.chart();
+                chart.resetData();
+            }
         }
 
         /**
@@ -2074,6 +2151,10 @@
                         startDate: new Date(start_time * 1000).toISOString(),
                         bars_count
                     });
+
+                    // 【关键修复】激活回放模式
+                    replayMode = true;
+                    console.log('🎬 [REPLAY MODE] ✅ ACTIVATED - replayMode set to true');
 
                     // Update trading state
                     tradingState.replayStartTime = start_time;
