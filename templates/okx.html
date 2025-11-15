@@ -1255,14 +1255,27 @@
 
         // Trading state management
         let tradingState = {
+            accountBalance: 10000, // Initial account balance
             inPosition: false,
+            position: {
+                type: null, // 'buy' or 'sell' or 'long' or 'short'
+                entryPrice: 0,
+                entryTime: null,
+                margin: 0, // Invested margin
+                leverage: 1, // Leverage multiplier
+                quantity: 0, // Position quantity
+                liquidationPrice: 0, // Liquidation price
+            },
+            liquidationLine: null, // Reference to liquidation line
+            markers: [],
+            // Legacy fields for backward compatibility
             positionType: null, // 'buy' or 'sell'
             entryPrice: 0,
-            accountBalance: 10000,
             investAmount: 100,
             leverage: 1,
             entryTime: null,
             entryBarIndex: 0,
+            // Replay session fields
             replaySessionId: null, // 回放会话ID
             replayStartTime: null, // 回放开始时间
             replayEndTime: null, // 回放结束时间
@@ -1353,7 +1366,7 @@
         }
 
         // Update replay status display
-        function updateReplayStatus() {
+        async function updateReplayStatus() {
             const remainingBarsEl = document.getElementById('remaining-bars-value');
             const accountBalanceEl = document.getElementById('account-balance-value');
             const currentPnLEl = document.getElementById('current-pnl-value');
@@ -1370,17 +1383,97 @@
                 }
             }
 
+            // Update balance - show total equity if in position
             if (accountBalanceEl) {
-                accountBalanceEl.textContent = tradingState.accountBalance.toFixed(2);
+                let displayBalance = tradingState.accountBalance;
+
+                if (tradingState.inPosition && tradingState.position.type) {
+                    try {
+                        const currentPrice = await getCurrentPrice();
+                        const pnl = calculatePnL(
+                            tradingState.position.type,
+                            tradingState.position.entryPrice,
+                            currentPrice,
+                            tradingState.position.quantity
+                        );
+                        // Total equity = available balance + margin + unrealized P&L
+                        displayBalance = tradingState.accountBalance + tradingState.position.margin + pnl;
+                    } catch (e) {
+                        console.error('Unable to calculate real-time equity:', e);
+                    }
+                }
+
+                accountBalanceEl.textContent = displayBalance.toFixed(2);
             }
 
+            // Update current P&L (if in position)
             if (tradingState.inPosition && currentPnLEl && currentPnLContainer) {
-                const currentPrice = getCurrentPrice();
-                if (currentPrice) {
-                    const pnl = calculateCurrentPnL(currentPrice);
+                try {
+                    const currentPrice = await getCurrentPrice();
+                    const pnl = calculatePnL(
+                        tradingState.position.type,
+                        tradingState.position.entryPrice,
+                        currentPrice,
+                        tradingState.position.quantity
+                    );
                     currentPnLEl.textContent = (pnl >= 0 ? '+' : '') + pnl.toFixed(2);
                     currentPnLEl.className = 'status-value ' + (pnl >= 0 ? 'profit' : 'loss');
                     currentPnLContainer.style.display = 'block';
+
+                    // Liquidation check
+                    if ((tradingState.position.type === 'buy' && currentPrice <= tradingState.position.liquidationPrice) ||
+                        (tradingState.position.type === 'sell' && currentPrice >= tradingState.position.liquidationPrice)) {
+                        // Immediately set state to prevent re-entry
+                        const positionToLiquidate = {...tradingState.position};
+                        tradingState.inPosition = false;
+
+                        if (isPlaying) {
+                            stopPlayback();
+                        }
+                        alert('Position has been liquidated!');
+
+                        // Draw close marker before clearing state
+                        await addClosePositionMarker(
+                            positionToLiquidate.type,
+                            positionToLiquidate.entryPrice,
+                            currentPrice
+                        );
+
+                        // Margin is completely lost, no need to update balance
+                        await saveTrade({
+                            symbol: window.widget ? window.widget.chart().symbol() : 'BTC-USDT',
+                            position_type: positionToLiquidate.type,
+                            entry_time: positionToLiquidate.entryTime,
+                            exit_time: tradingState.currentBarTime || Date.now() / 1000,
+                            entry_price: positionToLiquidate.entryPrice,
+                            exit_price: currentPrice,
+                            quantity: positionToLiquidate.quantity,
+                            leverage: positionToLiquidate.leverage,
+                            margin: positionToLiquidate.margin,
+                            pnl: -positionToLiquidate.margin,
+                            timestamp: Date.now() / 1000,
+                            replay_session_id: tradingState.replaySessionId,
+                            is_first_trade: false,
+                            interval: window.widget ? window.widget.chart().resolution() : '1D',
+                            bars_count: tradingState.barsCount
+                        });
+
+                        // Reset state
+                        tradingState.position = {
+                            type: null,
+                            entryPrice: 0,
+                            entryTime: null,
+                            margin: 0,
+                            leverage: 1,
+                            quantity: 0,
+                            liquidationPrice: 0
+                        };
+                        clearPositionInfo();
+                        toggleTradingButtons(false);
+                        removeLiquidationLine();
+                    }
+                } catch (e) {
+                    console.error('Error updating P&L display:', e);
                 }
             } else if (currentPnLContainer) {
                 currentPnLContainer.style.display = 'none';
@@ -1519,50 +1612,103 @@
         }
 
         // Get current price from chart
-        function getCurrentPrice() {
-            try {
-                if (!window.widget) return 0;
+        async function getCurrentPrice() {
+            // Try to fetch real price from chart
+            if (window.widget) {
+                try {
+                    const chart = window.widget.chart();
+                    const visibleRange = chart.getVisibleRange();
 
-                // Use a hardcoded price for now (will be improved later with actual chart data)
-                // This is a temporary solution to avoid errors
-                const defaultPrices = {
-                    'BTC-USDT': 45000,
-                    'ETH-USDT': 2500,
-                    'SOL-USDT': 100,
-                    'DOGE-USDT': 0.08,
-                    'ADA-USDT': 0.5,
-                    'MATIC-USDT': 0.8,
-                    'DOT-USDT': 7,
-                    'SHIB-USDT': 0.000009,
-                    'AVAX-USDT': 35,
-                    'LINK-USDT': 15
-                };
+                    // If has visible range, use exportData to get latest candle data
+                    if (visibleRange && visibleRange.from && visibleRange.to) {
+                        const data = await chart.exportData({
+                            from: visibleRange.from,
+                            to: visibleRange.to,
+                            includeSeries: true
+                        });
 
-                const chart = window.widget.chart();
-                const symbol = chart.symbol();
+                        // Process returned data according to TradingView format
+                        // Data is 2D array where each row represents a candle
+                        // Usually index 4 stores the close price
+                        if (data && Array.isArray(data.data) && data.data.length > 0) {
+                            const lastIndex = data.data.length - 1;
+                            const lastCandle = data.data[lastIndex];
 
-                // Return default price for the symbol or fallback
-                return defaultPrices[symbol] || tradingState.entryPrice || 50000;
-            } catch(e) {
-                console.error('Error getting current price:', e);
-                return tradingState.entryPrice || 50000;
+                            // If array format, use OHLCV structure (index 4 is close price)
+                            return lastCandle[4];
+                        }
+                    }
+                } catch (e) {
+                    console.error('Failed to get current price:', e);
+                }
             }
+
+            // If unable to get from chart, use random price for simulation
+            return Math.round(Math.random() * 10000) / 100;
         }
 
-        // Calculate current P&L
+        // Calculate P&L
+        function calculatePnL(positionType, entryPrice, currentPrice, quantity) {
+            if (positionType === 'long' || positionType === 'buy') {
+                return (currentPrice - entryPrice) * quantity;
+            } else if (positionType === 'short' || positionType === 'sell') {
+                return (entryPrice - currentPrice) * quantity;
+            }
+            return 0;
+        }
+
+        // Calculate current P&L (for backward compatibility)
         function calculateCurrentPnL(currentPrice) {
             if (!tradingState.inPosition) return 0;
 
             const quantity = tradingState.investAmount * tradingState.leverage / tradingState.entryPrice;
-            let pnl = 0;
+            return calculatePnL(tradingState.positionType, tradingState.entryPrice, currentPrice, quantity);
+        }
 
-            if (tradingState.positionType === 'buy') {
-                pnl = (currentPrice - tradingState.entryPrice) * quantity;
-            } else {
-                pnl = (tradingState.entryPrice - currentPrice) * quantity;
+        // Calculate liquidation price
+        function calculateLiquidationPrice(entryPrice, leverage, positionType) {
+            if (leverage <= 0) return 0;
+            // Maintenance margin rate, typically 0.5% for high leverage
+            const maintenanceMarginRate = 0.005;
+
+            if (positionType === 'long' || positionType === 'buy') {
+                return entryPrice * (1 - (1 / leverage) + maintenanceMarginRate);
+            } else if (positionType === 'short' || positionType === 'sell') {
+                return entryPrice * (1 + (1 / leverage) - maintenanceMarginRate);
             }
+            return 0;
+        }
 
-            return pnl;
+        // Draw liquidation price line
+        function drawLiquidationLine(price) {
+            if (!window.widget || price <= 0) return;
+            removeLiquidationLine(); // Remove old one first
+
+            try {
+                tradingState.liquidationLine = window.widget.chart().createOrderLine()
+                    .price(price)
+                    .text(`Liquidation: ${price.toFixed(4)}`)
+                    .lineColor("#FF5252")
+                    .bodyBorderColor("#FF5252")
+                    .bodyBackgroundColor("rgba(255, 82, 82, 0.2)")
+                    .bodyTextColor("#FF5252")
+                    .lineStyle(2) // Dashed line
+                    .lineWidth(1);
+            } catch (e) {
+                console.error("Failed to draw liquidation line:", e);
+            }
+        }
+
+        // Remove liquidation price line
+        function removeLiquidationLine() {
+            if (tradingState.liquidationLine) {
+                try {
+                    tradingState.liquidationLine.remove();
+                } catch (e) {
+                    console.warn("Failed to remove liquidation line:", e);
+                }
+                tradingState.liquidationLine = null;
+            }
         }
 
         // Clear all drawings
@@ -1616,6 +1762,144 @@
             const positionInfo = document.getElementById('position-info');
             if (positionInfo) {
                 positionInfo.classList.remove('active');
+            }
+        }
+
+        // Get current bar time - returns Promise
+        function getCurrentBarTime() {
+            if (!window.widget) {
+                return Promise.resolve(Math.floor(Date.now() / 1000));
+            }
+
+            try {
+                const chart = window.widget.chart();
+
+                // Use visible range to get latest bar time
+                const visibleRange = chart.getVisibleRange();
+
+                // If has visible range, use the end time
+                if (visibleRange && visibleRange.to) {
+                    return Promise.resolve(visibleRange.to);
+                } else {
+                    // If unable to get visible range, return current timestamp
+                    return Promise.resolve(Math.floor(Date.now() / 1000));
+                }
+            } catch (e) {
+                console.error('Failed to get current bar time:', e);
+                return Promise.resolve(Math.floor(Date.now() / 1000));
+            }
+        }
+
+        // Add buy marker (up arrow)
+        async function addBuyMarker(price) {
+            if (!window.widget) return;
+
+            try {
+                const chart = window.widget.chart();
+                const currentTime = await getCurrentBarTime();
+
+                // Record entry time
+                tradingState.entryTime = currentTime;
+
+                // Create buy marker (up arrow, green)
+                const markerId = chart.createShape(
+                    { time: currentTime, channel: "low" },
+                    { shape: "arrow_up", text: "Buy" }
+                );
+
+                // Save marker ID
+                if (!tradingState.markers) tradingState.markers = [];
+                tradingState.markers.push(markerId);
+
+                console.log('Buy marker added successfully, ID:', markerId, 'price:', price, 'time:', new Date(currentTime * 1000).toLocaleString());
+            } catch (e) {
+                console.error('Failed to add buy marker:', e);
+            }
+        }
+
+        // Add sell marker (down arrow)
+        async function addSellMarker(price) {
+            if (!window.widget) return;
+
+            try {
+                const chart = window.widget.chart();
+                const currentTime = await getCurrentBarTime();
+
+                // Record entry time
+                tradingState.entryTime = currentTime;
+
+                // Create sell marker (down arrow, red)
+                const markerId = chart.createShape(
+                    { time: currentTime, channel: "high" },
+                    { shape: "arrow_down", text: "Sell" }
+                );
+
+                // Save marker ID
+                if (!tradingState.markers) tradingState.markers = [];
+                tradingState.markers.push(markerId);
+
+                console.log('Sell marker added successfully, ID:', markerId, 'price:', price, 'time:', new Date(currentTime * 1000).toLocaleString());
+            } catch (e) {
+                console.error('Failed to add sell marker:', e);
+            }
+        }
+
+        // Add close position area marker
+        async function addClosePositionMarker(positionType, entryPrice, exitPrice) {
+            if (!window.widget || !tradingState.entryTime) return;
+
+            try {
+                const chart = window.widget.chart();
+                // Get current bar time
+                const currentTime = await getCurrentBarTime();
+
+                // Determine color (based on profit/loss status)
+                let color;
+                // Check if profitable
+                const isProfitable = positionType === 'buy' ? exitPrice > entryPrice : exitPrice < entryPrice;
+
+                // Set color based on position type and profit/loss status
+                if (positionType === 'buy') {
+                    // Long: lighter green for profit, darker green for loss
+                    color = isProfitable ? '#4CAF50' : '#1B5E20';
+                } else {
+                    // Short: lighter red for profit, darker red for loss
+                    color = isProfitable ? '#F44336' : '#B71C1C';
+                }
+
+                const opacity = 0.2; // Transparency
+                const borderOpacity = 0.8; // Border transparency
+
+                // Create area marker
+                const markerId = chart.createMultipointShape([
+                    { time: tradingState.entryTime, price: entryPrice },
+                    { time: currentTime, price: exitPrice }
+                ], {
+                    shape: 'date_and_price_range',
+                    lock: false,
+                    disableSelection: true,
+                    disableSave: false,
+                    disableUndo: false,
+                    zOrder: 'bottom',  // Place at bottom layer
+                    overrides: {
+                        backgroundColor: color,
+                        backgroundTransparency: Math.round(opacity * 100),
+                        borderColor: color,
+                        borderWidth: 1,
+                        borderTransparency: Math.round((1 - borderOpacity) * 100),
+                        extendLeft: false,
+                        extendRight: false
+                    }
+                });
+
+                // Save marker ID
+                if (!tradingState.markers) tradingState.markers = [];
+                tradingState.markers.push(markerId);
+
+                console.log('Close position area marker added successfully, ID:', markerId, 'from time:', new Date(tradingState.entryTime * 1000).toLocaleString(),
+                            'to time:', new Date(currentTime * 1000).toLocaleString());
+            } catch (e) {
+                console.error('Failed to add close position area marker:', e);
             }
         }
 
@@ -1796,6 +2080,9 @@
         // Load a specific replay session
         async function loadReplaySession(sessionId) {
             try {
+                // End current replay session first
+                await finishCurrentReplaySession();
+
                 const response = await fetch(`/api/replay/sessions/${sessionId}`);
                 const data = await response.json();
 
@@ -1806,35 +2093,210 @@
                     const modal = document.getElementById('history-modal');
                     if (modal) modal.classList.remove('show');
 
+                    // Open replay menu
+                    const replayMenu = document.getElementById('replay-menu');
+                    if (replayMenu) replayMenu.style.display = 'flex';
+
                     // Set chart to replay state
                     if (window.widget && session.symbol && session.start_time) {
                         const chart = window.widget.chart();
 
-                        // Change symbol if different
+                        // Change symbol if different (with callback for sequential execution)
                         if (chart.symbol() !== session.symbol) {
-                            chart.setSymbol(session.symbol);
+                            chart.setSymbol(session.symbol, function() {
+                                console.log('Symbol changed to:', session.symbol);
+                                // Set interval after symbol change
+                                if (session.interval && chart.resolution() !== session.interval) {
+                                    chart.setResolution(session.interval, function() {
+                                        console.log('Resolution changed to:', session.interval);
+                                        // Set chart range after resolution change
+                                        setupReplaySession(session, sessionId);
+                                    });
+                                } else {
+                                    setupReplaySession(session, sessionId);
+                                }
+                            });
+                        } else {
+                            // Set interval if different
+                            if (session.interval && chart.resolution() !== session.interval) {
+                                chart.setResolution(session.interval, function() {
+                                    console.log('Resolution changed to:', session.interval);
+                                    setupReplaySession(session, sessionId);
+                                });
+                            } else {
+                                setupReplaySession(session, sessionId);
+                            }
                         }
-
-                        // Set interval if different
-                        if (session.interval && chart.resolution() !== session.interval) {
-                            chart.setResolution(session.interval);
-                        }
-
-                        // Set chart range
-                        setChartRangeFromTimestamp(
-                            session.start_time,
-                            session.bars_count || 150,
-                            session.interval || '1D'
-                        );
-
-                        // Update trading state
-                        tradingState.replaySessionId = sessionId;
-                        tradingState.replayStartTime = session.start_time;
-                        tradingState.barsCount = session.bars_count || 150;
                     }
                 }
             } catch(e) {
                 console.error('Error loading replay session:', e);
+            }
+        }
+
+        // Helper function to setup replay session after symbol/resolution changes
+        function setupReplaySession(session, sessionId) {
+            const chart = window.widget.chart();
+            const interval = chart.resolution();
+            const secondsPerBar = calculateSecondsPerBar(interval);
+
+            // Set chart range
+            setChartRangeFromTimestamp(
+                session.start_time,
+                session.bars_count || 150,
+                session.interval || interval
+            );
+
+            // Update trading state
+            tradingState.replaySessionId = sessionId;
+            tradingState.replayStartTime = session.start_time;
+            tradingState.barsCount = session.bars_count || 150;
+            tradingState.originalInterval = session.interval || interval;
+
+            // Calculate replay end time
+            tradingState.replayEndTime = session.start_time + ((session.bars_count || 150) * secondsPerBar);
+            tradingState.currentBarTime = session.start_time;
+
+            // Clear trading state if in position
+            if (tradingState.inPosition) {
+                tradingState.inPosition = false;
+                tradingState.positionType = null;
+                tradingState.entryPrice = 0;
+                clearPositionInfo();
+                toggleTradingButtons(false);
+            }
+
+            // Load trades and add markers
+            loadTradesAndAddMarkers(sessionId);
+        }
+
+        // Load trades and add markers for a replay session
+        function loadTradesAndAddMarkers(sessionId) {
+            if (!sessionId || !window.widget) return;
+
+            // Request session details including trade records
+            fetch(`/api/replay/sessions/${sessionId}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'ok' && data.data && data.data.trades) {
+                        const trades = data.data.trades;
+                        console.log(`Loaded ${trades.length} trade records`);
+
+                        // Clear existing markers
+                        clearAllMarkers();
+
+                        // Add trade markers
+                        trades.forEach(trade => {
+                            addHistoricalTradeMarkers(trade);
+                        });
+                    } else {
+                        console.error('Failed to load trade records:', data.message || 'Unknown error');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading trade records:', error);
+                });
+        }
+
+        // Clear all markers
+        function clearAllMarkers() {
+            if (!window.widget) return;
+
+            try {
+                const chart = window.widget.chart();
+
+                // If we have saved markers, clear them
+                if (tradingState.markers && tradingState.markers.length > 0) {
+                    tradingState.markers.forEach(markerId => {
+                        try {
+                            chart.removeEntity(markerId);
+                        } catch (e) {
+                            console.warn('Failed to remove marker:', e);
+                        }
+                    });
+
+                    // Reset markers array
+                    tradingState.markers = [];
+                }
+            } catch (e) {
+                console.error('Error clearing markers:', e);
+            }
+        }
+
+        // Add markers for historical trades
+        async function addHistoricalTradeMarkers(trade) {
+            if (!window.widget) return;
+
+            try {
+                const chart = window.widget.chart();
+
+                // Add entry marker
+                let entryMarkerId;
+                if (trade.position_type === 'long' || trade.position_type === 'buy') {
+                    // Long position entry marker (up arrow, green)
+                    entryMarkerId = await chart.createShape(
+                        { time: trade.entry_time, channel: "low" },
+                        { shape: "arrow_up", text: "Buy" }
+                    );
+                } else {
+                    // Short position entry marker (down arrow, red)
+                    entryMarkerId = await chart.createShape(
+                        { time: trade.entry_time, channel: "high" },
+                        { shape: "arrow_down", text: "Sell" }
+                    );
+                }
+
+                // Save marker ID
+                if (entryMarkerId) {
+                    tradingState.markers.push(entryMarkerId);
+                }
+
+                // Determine trade area color (based on profit/loss status)
+                const isProfitable = trade.pnl > 0;
+                let color;
+
+                // Set color based on position type and profit/loss
+                if (trade.position_type === 'long' || trade.position_type === 'buy') {
+                    // Long: lighter green for profit, darker green for loss
+                    color = isProfitable ? '#4CAF50' : '#1B5E20';
+                } else {
+                    // Short: lighter red for profit, darker red for loss
+                    color = isProfitable ? '#F44336' : '#B71C1C';
+                }
+
+                const opacity = 0.2; // Transparency
+                const borderOpacity = 0.8; // Border transparency
+
+                // Add trade area marker
+                const areaMarkerId = await chart.createMultipointShape([
+                    { time: trade.entry_time, price: trade.entry_price },
+                    { time: trade.exit_time, price: trade.exit_price }
+                ], {
+                    shape: 'date_and_price_range',
+                    lock: true,
+                    disableSelection: true,
+                    disableSave: false,
+                    disableUndo: false,
+                    zOrder: 'bottom',  // Place at bottom layer
+                    overrides: {
+                        backgroundColor: color,
+                        backgroundTransparency: Math.round(opacity * 100),
+                        borderColor: color,
+                        borderWidth: 1,
+                        borderTransparency: Math.round((1 - borderOpacity) * 100),
+                        extendLeft: false,
+                        extendRight: false,
+                        text: `PnL: ${trade.pnl > 0 ? '+' : ''}${trade.pnl.toFixed(2)}`
+                    }
+                });
+
+                if (areaMarkerId) {
+                    tradingState.markers.push(areaMarkerId);
+                }
+
+                console.log('Historical trade marker added successfully');
+            } catch (e) {
+                console.error('Failed to add historical trade marker:', e);
             }
         }
 
@@ -2350,31 +2812,60 @@
                 buyBtn.onclick = async function() {
                     if (tradingState.inPosition) return;
 
-                    const investAmount = parseFloat(document.getElementById('invest-amount').value) || 100;
-                    const leverage = parseInt(document.getElementById('leverage-selector').value) || 1;
-                    const currentPrice = getCurrentPrice();
+                    try {
+                        const margin = parseFloat(document.getElementById('invest-amount').value) || 100;
+                        const leverage = parseInt(document.getElementById('leverage-selector').value) || 1;
+                        const price = await getCurrentPrice();
 
-                    if (!currentPrice) {
-                        console.error('Cannot get current price');
-                        return;
+                        if (isNaN(margin) || margin <= 0) {
+                            alert('Please enter a valid investment amount');
+                            return;
+                        }
+                        if (margin > tradingState.accountBalance) {
+                            alert('Investment amount cannot exceed account balance');
+                            return;
+                        }
+
+                        // Update account balance
+                        tradingState.accountBalance -= margin;
+
+                        // Calculate position
+                        const positionValue = margin * leverage;
+                        const quantity = positionValue / price;
+
+                        // Update position state
+                        tradingState.inPosition = true;
+                        tradingState.position = {
+                            type: 'buy',
+                            entryPrice: price,
+                            entryTime: await getCurrentBarTime(),
+                            margin: margin,
+                            leverage: leverage,
+                            quantity: quantity,
+                            liquidationPrice: calculateLiquidationPrice(price, leverage, 'buy')
+                        };
+
+                        // Update legacy fields for backward compatibility
+                        tradingState.positionType = 'buy';
+                        tradingState.entryPrice = price;
+                        tradingState.investAmount = margin;
+                        tradingState.leverage = leverage;
+
+                        // Record market price at start if first trade
+                        if (tradingState.isFirstTrade && tradingState.replaySessionId) {
+                            tradingState.marketPriceStart = price;
+                            await updateSessionMarketPrice(tradingState.replaySessionId, price, 'start');
+                        }
+
+                        // Update UI
+                        toggleTradingButtons(true);
+                        updatePositionInfo();
+                        drawLiquidationLine(tradingState.position.liquidationPrice);
+                        await addBuyMarker(price);
+                        updateReplayStatus();
+                    } catch (e) {
+                        console.error('Buy operation failed:', e);
                     }
-
-                    tradingState.inPosition = true;
-                    tradingState.positionType = 'buy';
-                    tradingState.entryPrice = currentPrice;
-                    tradingState.investAmount = investAmount;
-                    tradingState.leverage = leverage;
-                    tradingState.entryTime = tradingState.currentBarTime || Date.now() / 1000;
-
-                    // Record market price at start if first trade
-                    if (tradingState.isFirstTrade && tradingState.replaySessionId) {
-                        tradingState.marketPriceStart = currentPrice;
-                        await updateSessionMarketPrice(tradingState.replaySessionId, currentPrice, 'start');
-                    }
-
-                    toggleTradingButtons(true);
-                    updatePositionInfo();
-                    updateReplayStatus();
                 };
             }
 
@@ -2384,31 +2875,60 @@
                 sellBtn.onclick = async function() {
                     if (tradingState.inPosition) return;
 
-                    const investAmount = parseFloat(document.getElementById('invest-amount').value) || 100;
-                    const leverage = parseInt(document.getElementById('leverage-selector').value) || 1;
-                    const currentPrice = getCurrentPrice();
+                    try {
+                        const margin = parseFloat(document.getElementById('invest-amount').value) || 100;
+                        const leverage = parseInt(document.getElementById('leverage-selector').value) || 1;
+                        const price = await getCurrentPrice();
 
-                    if (!currentPrice) {
-                        console.error('Cannot get current price');
-                        return;
+                        if (isNaN(margin) || margin <= 0) {
+                            alert('Please enter a valid investment amount');
+                            return;
+                        }
+                        if (margin > tradingState.accountBalance) {
+                            alert('Investment amount cannot exceed account balance');
+                            return;
+                        }
+
+                        // Update account balance
+                        tradingState.accountBalance -= margin;
+
+                        // Calculate position
+                        const positionValue = margin * leverage;
+                        const quantity = positionValue / price;
+
+                        // Update position state
+                        tradingState.inPosition = true;
+                        tradingState.position = {
+                            type: 'sell',
+                            entryPrice: price,
+                            entryTime: await getCurrentBarTime(),
+                            margin: margin,
+                            leverage: leverage,
+                            quantity: quantity,
+                            liquidationPrice: calculateLiquidationPrice(price, leverage, 'sell')
+                        };
+
+                        // Update legacy fields for backward compatibility
+                        tradingState.positionType = 'sell';
+                        tradingState.entryPrice = price;
+                        tradingState.investAmount = margin;
+                        tradingState.leverage = leverage;
+
+                        // Record market price at start if first trade
+                        if (tradingState.isFirstTrade && tradingState.replaySessionId) {
+                            tradingState.marketPriceStart = price;
+                            await updateSessionMarketPrice(tradingState.replaySessionId, price, 'start');
+                        }
+
+                        // Update UI
+                        toggleTradingButtons(true);
+                        updatePositionInfo();
+                        drawLiquidationLine(tradingState.position.liquidationPrice);
+                        await addSellMarker(price);
+                        updateReplayStatus();
+                    } catch (e) {
+                        console.error('Sell operation failed:', e);
                     }
-
-                    tradingState.inPosition = true;
-                    tradingState.positionType = 'sell';
-                    tradingState.entryPrice = currentPrice;
-                    tradingState.investAmount = investAmount;
-                    tradingState.leverage = leverage;
-                    tradingState.entryTime = tradingState.currentBarTime || Date.now() / 1000;
-
-                    // Record market price at start if first trade
-                    if (tradingState.isFirstTrade && tradingState.replaySessionId) {
-                        tradingState.marketPriceStart = currentPrice;
-                        await updateSessionMarketPrice(tradingState.replaySessionId, currentPrice, 'start');
-                    }
-
-                    toggleTradingButtons(true);
-                    updatePositionInfo();
-                    updateReplayStatus();
                 };
             }
 
@@ -2418,43 +2938,67 @@
                 closeBtn.onclick = async function() {
                     if (!tradingState.inPosition) return;
 
-                    const currentPrice = getCurrentPrice();
-                    if (!currentPrice) {
-                        console.error('Cannot get current price');
-                        return;
+                    try {
+                        const price = await getCurrentPrice();
+                        const pnl = calculatePnL(
+                            tradingState.position.type,
+                            tradingState.position.entryPrice,
+                            price,
+                            tradingState.position.quantity
+                        );
+
+                        // Update account balance (return margin + P&L)
+                        tradingState.accountBalance += tradingState.position.margin + pnl;
+
+                        // Save trade to database
+                        const exitTime = tradingState.currentBarTime || Date.now() / 1000;
+                        await saveTrade({
+                            symbol: window.widget ? window.widget.chart().symbol() : 'BTC-USDT',
+                            position_type: tradingState.position.type,
+                            entry_time: tradingState.position.entryTime,
+                            exit_time: exitTime,
+                            entry_price: tradingState.position.entryPrice,
+                            exit_price: price,
+                            quantity: tradingState.position.quantity,
+                            leverage: tradingState.position.leverage,
+                            margin: tradingState.position.margin,
+                            pnl: pnl,
+                            timestamp: Date.now() / 1000,
+                            replay_session_id: tradingState.replaySessionId,
+                            is_first_trade: tradingState.isFirstTrade,
+                            interval: window.widget ? window.widget.chart().resolution() : '1D',
+                            bars_count: tradingState.barsCount
+                        });
+
+                        // Draw close position marker before clearing state
+                        await addClosePositionMarker(
+                            tradingState.position.type,
+                            tradingState.position.entryPrice,
+                            price
+                        );
+
+                        // Reset position state
+                        tradingState.inPosition = false;
+                        tradingState.position = {
+                            type: null,
+                            entryPrice: 0,
+                            entryTime: null,
+                            margin: 0,
+                            leverage: 1,
+                            quantity: 0,
+                            liquidationPrice: 0
+                        };
+                        tradingState.positionType = null;
+                        tradingState.isFirstTrade = false;
+
+                        // Update UI
+                        clearPositionInfo();
+                        toggleTradingButtons(false);
+                        removeLiquidationLine();
+                        updateReplayStatus();
+                    } catch (e) {
+                        console.error('Close position operation failed:', e);
                     }
-
-                    const pnl = calculateCurrentPnL(currentPrice);
-                    const exitTime = tradingState.currentBarTime || Date.now() / 1000;
-
-                    // Save trade to database
-                    await saveTrade({
-                        symbol: window.widget ? window.widget.chart().symbol() : 'BTC-USDT',
-                        position_type: tradingState.positionType,
-                        entry_time: tradingState.entryTime,
-                        exit_time: exitTime,
-                        entry_price: tradingState.entryPrice,
-                        exit_price: currentPrice,
-                        quantity: tradingState.investAmount * tradingState.leverage / tradingState.entryPrice,
-                        leverage: tradingState.leverage,
-                        margin: tradingState.investAmount,
-                        pnl: pnl,
-                        timestamp: Date.now() / 1000,
-                        replay_session_id: tradingState.replaySessionId,
-                        is_first_trade: tradingState.isFirstTrade,
-                        interval: window.widget ? window.widget.chart().resolution() : '1D',
-                        bars_count: tradingState.barsCount
-                    });
-
-                    // Update account balance
-                    tradingState.accountBalance += pnl;
-                    tradingState.inPosition = false;
-                    tradingState.positionType = null;
-                    tradingState.isFirstTrade = false;
-
-                    toggleTradingButtons(false);
-                    clearPositionInfo();
-                    updateReplayStatus();
                 };
             }
 
